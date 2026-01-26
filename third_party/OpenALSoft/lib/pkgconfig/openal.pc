@@ -1,0 +1,12 @@
+prefix=/Users/dxemike/Desktop/untitled folder 15/Projects/SimpsonsTVOS/Build/AppleTV/thirdparty/install/OpenALSoft
+exec_prefix=${prefix}
+libdir=/Users/dxemike/Desktop/untitled folder 15/Projects/SimpsonsTVOS/Build/AppleTV/thirdparty/install/OpenALSoft/lib
+includedir=/Users/dxemike/Desktop/untitled folder 15/Projects/SimpsonsTVOS/Build/AppleTV/thirdparty/install/OpenALSoft/include
+
+Name: OpenAL
+Description: OpenAL is a cross-platform 3D audio API
+Requires: 
+Version: 1.25.0
+Libs: -L${libdir} -lopenal 
+Libs.private: -pthread -Wl,-framework,AudioToolbox -Wl,-framework,CoreFoundation -Wl,-framework,CoreAudio -ldl -latomic -lm
+Cflags: -I${includedir} -I${includedir}/AL -DAL_LIBTYPE_STATIC
