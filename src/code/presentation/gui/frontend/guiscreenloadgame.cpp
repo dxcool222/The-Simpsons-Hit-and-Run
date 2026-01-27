@@ -32,6 +32,7 @@
 #include <Page.h>
 #include <Screen.h>
 #include <Text.h>
+#include <main/platformdef.h>
 
 //===========================================================================
 // Global Data, Local Data, Local Classes
@@ -664,7 +665,7 @@ void CGuiScreenLoadGame::InitIntro()
 
     m_pFullText->SetVisible(false);
 
-#if defined(RAD_WIN32) || defined(RAD_TVOS)
+#ifdef RAD_MODERN_PLATFORM
     // Auto-select the single save drive for PC/tvOS platforms
     if( GetMemoryCardManager()->GetCurrentDrive() == NULL )
     {

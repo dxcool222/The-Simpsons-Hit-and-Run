@@ -23,6 +23,7 @@
 #include <mission/gameplaymanager.h>
 #include <gameflow/gameflow.h>
 #include <worldsim/character/charactermanager.h>
+#include <main/platformdef.h>
 
 // Scrooby
 #include <Group.h>
@@ -159,7 +160,7 @@ HudCountDown::Update( float elapsedTime )
             GetEventManager()->TriggerEvent( EVENT_IN_GAMEPLAY_CONVERSATION, static_cast<void*>( &m_dialogData ) );
         }
 
-#if defined(RAD_WIN32) || defined(RAD_TVOS)
+#ifdef RAD_MODERN_PLATFORM
         static float COUNT_DOWN_MAX_SCALE = 1.5f;
 #else
         static float COUNT_DOWN_MAX_SCALE = 3.0f;

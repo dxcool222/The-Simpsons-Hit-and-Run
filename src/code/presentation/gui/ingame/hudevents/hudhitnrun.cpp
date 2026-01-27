@@ -15,6 +15,7 @@
 //===========================================================================
 #include <presentation/gui/ingame/hudevents/hudhitnrun.h>
 #include <presentation/gui/utility/specialfx.h>
+#include <main/platformdef.h>
 
 // Scrooby
 #include <App.h>
@@ -27,7 +28,7 @@
 // Global Data, Local Data, Local Classes
 //===========================================================================
 
-#if defined(RAD_WIN32) || defined(RAD_TVOS)
+#ifdef RAD_MODERN_PLATFORM
 const float HNR_MESSAGE_SCALE = 1.75f;
 const float HNR_MESSAGE_BUSTED_SCALE = 2.0f;
 const float HNR_TICKET_SCALE = 1.0f;

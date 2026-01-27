@@ -27,6 +27,7 @@
 #include <mission/charactersheet/charactersheetmanager.h>
 #include <sound/soundmanager.h>
 
+#include <main/platformdef.h>
 #include <p3d/unicode.hpp>
 #include <raddebug.hpp> // Foundation
 #include <Layer.h>
@@ -91,7 +92,7 @@ MEMTRACK_PUSH_GROUP( "CGUIScreenMissionOver" );
         missionFailedText->CreateBitmapTextBuffer( textLength );
         missionFailedText->SetBitmapText( text );
         missionFailedText->SetBitmapTextLineSpacing( 10 );
-#if defined(RAD_WIN32) || defined(RAD_TVOS)
+#ifdef RAD_MODERN_PLATFORM
         missionFailedText->ResetTransformation();
         missionFailedText->ScaleAboutCenter( 0.5f );
 #endif

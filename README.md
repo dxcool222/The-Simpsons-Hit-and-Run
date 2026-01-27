@@ -17,6 +17,8 @@ premake5 xcode4
 Once generated, open the Xcode project, build, and deploy to your Apple TV!
 Known Bugs
 
-Lisa’s school environment is visually broken or glitchy in certain areas.
-Non-player characters’ speech can play back too fast in certain scenes.
-Some windows or text boxes have oversized text, making them harder to read.
+Lisa’s school environment is visually broken or glitchy in certain areas.🛑
+
+Non-player characters’ speech can play back too fast in certain scenes.🛑
+
+Some windows or text boxes have oversized text, making them harder to read. FIXED ✅

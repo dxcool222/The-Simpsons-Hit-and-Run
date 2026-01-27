@@ -27,6 +27,7 @@
 #include <data/memcard/memorycardmanager.h>
 #include <memory/srrmemory.h>
 #include <gameflow/gameflow.h>
+#include <main/platformdef.h>
 
 #include <raddebug.hpp>     // Foundation
 #include <Group.h>
@@ -434,18 +435,13 @@ void CGuiScreenSaveGame::HandleMessage
                 
                 if (corrupt)
                 {
-                    int plat_index = PLATFORM_TEXT_INDEX;
-#ifdef RAD_XBOX
-                    if (GetMemoryCardManager()->GetCurrentDriveIndex()==0)
-                        plat_index++;
-#endif
-#ifdef RAD_GAMECUBE
                     int errorMessage = GetErrorMessageIndex( DataCorrupt, ERROR_DURING_SAVING );
-                    m_guiManager->DisplayErrorPrompt( errorMessage, this,
-                                                      ERROR_RESPONSE_CONTINUE_WITHOUT_SAVE | ERROR_RESPONSE_RETRY | ERROR_RESPONSE_DELETE );
+
+#ifdef RAD_GAMECUBE
+                    m_guiManager->DisplayErrorPrompt( errorMessage, this, ERROR_RESPONSE_CONTINUE_WITHOUT_SAVE | ERROR_RESPONSE_RETRY | ERROR_RESPONSE_DELETE );
                     m_operation = SAVE;
 #else
-                    m_guiManager->DisplayPrompt( PROMPT_LOAD_DELETE_CORRUPT_GC + plat_index, this );
+                    m_guiManager->DisplayPrompt( PROMPT_LOAD_DELETE_CORRUPT_GC + PLATFORM_TEXT_INDEX, this );
 #endif
                 }
                 else if( (m_nonEmptySlots & (1 << m_currentSlot)) > 0 )
@@ -465,10 +461,7 @@ void CGuiScreenSaveGame::HandleMessage
                     m_guiManager->DisplayPrompt( PROMPT_SAVE_CONFIRM_OVERWRITE_XBOX, this );
 #endif
 
-#ifdef RAD_WIN32
-                    m_guiManager->DisplayPrompt( PROMPT_SAVE_CONFIRM_OVERWRITE_XBOX, this );
-#endif
-#ifdef RAD_TVOS
+#ifdef RAD_MODERN_PLATFORM
                     m_guiManager->DisplayPrompt( PROMPT_SAVE_CONFIRM_OVERWRITE_XBOX, this );
 #endif
                 }
@@ -486,10 +479,7 @@ void CGuiScreenSaveGame::HandleMessage
                     m_guiManager->DisplayPrompt( PROMPT_SAVE_CONFIRM_XBOX, this );
 #endif
 
-#ifdef RAD_WIN32
-                    m_guiManager->DisplayPrompt( PROMPT_SAVE_CONFIRM_XBOX, this );
-#endif
-#ifdef RAD_TVOS
+#ifdef RAD_MODERN_PLATFORM
                     m_guiManager->DisplayPrompt( PROMPT_SAVE_CONFIRM_XBOX, this );
 #endif
                 }
@@ -587,7 +577,7 @@ CGuiScreenSaveGame::OnSaveGameComplete( radFileError errorCode )
         }
 #endif // RAD_PS2
 
-#ifdef RAD_XBOX
+#ifdef RAD_MODERN_PLATFORM
         switch( errorCode )
         {
             case Success:
@@ -603,41 +593,7 @@ CGuiScreenSaveGame::OnSaveGameComplete( radFileError errorCode )
                 break;
             }
         }
-#endif // RAD_XBOX
-
-#ifdef RAD_WIN32
-        switch( errorCode )
-        {
-            case Success:
-            {
-                rAssert( false );
-                break;
-            }
-            default:
-            {
-                m_guiManager->DisplayErrorPrompt( errorMessage, this,
-                                                  ERROR_RESPONSE_CONTINUE );
-                break;
-            }
-        }
-#endif // RAD_WIN32
-
-#ifdef RAD_TVOS
-        switch( errorCode )
-        {
-            case Success:
-            {
-                rAssert( false );
-                break;
-            }
-            default:
-            {
-                m_guiManager->DisplayErrorPrompt( errorMessage, this,
-                                                  ERROR_RESPONSE_CONTINUE );
-                break;
-            }
-        }
-#endif // RAD_TVOS
+#endif // RAD_MODERN_PLATFORM
     }
 }
 
@@ -769,7 +725,7 @@ void CGuiScreenSaveGame::InitIntro()
     m_StatusPromptShown = false;
     m_operation = SCREEN_OP_IDLE;
 
-#if defined(RAD_WIN32) || defined(RAD_TVOS)
+#ifdef RAD_MODERN_PLATFORM
     // Auto-select the single save drive for PC/tvOS platforms
     if( GetMemoryCardManager()->GetCurrentDrive() == NULL )
     {
@@ -840,10 +796,7 @@ void CGuiScreenSaveGame::InitIntro()
 #ifdef RAD_XBOX
                 corruptSlot.ReadUnicode( GetTextBibleString( "CORRUPT_SLOT_(XBOX)" ) );
 #endif
-#ifdef RAD_WIN32
-                corruptSlot.ReadUnicode( GetTextBibleString( "CORRUPT_SLOT_(XBOX)" ) );
-#endif
-#ifdef RAD_TVOS
+#ifdef RAD_MODERN_PLATFORM
                 corruptSlot.ReadUnicode( GetTextBibleString( "CORRUPT_SLOT_(XBOX)" ) );
 #endif
 #ifdef RAD_PS2
@@ -860,9 +813,9 @@ void CGuiScreenSaveGame::InitIntro()
             else
             {
                 slotText->SetString( 0, saveGameInfo.m_displayFilename );
-            #ifdef RAD_XBOX
+#ifdef RAD_XBOX
 			    strcpy(gGameFileName[i], saveGameInfo.m_displayFilename); // cache filename in the slot
-            #endif
+#endif
             }
 
             // default to slot with most recent saved game file
@@ -994,7 +947,7 @@ void CGuiScreenSaveGame::InitOutro()
 void
 CGuiScreenSaveGame::GotoMemoryCardScreen( bool isFromPrompt )
 {
-#if defined(RAD_WIN32) || defined(RAD_TVOS)
+#ifdef RAD_MODERN_PLATFORM
     m_pParent->HandleMessage( GUI_MSG_BACK_SCREEN );
 #else
     if( isFromPrompt )
@@ -1006,7 +959,7 @@ CGuiScreenSaveGame::GotoMemoryCardScreen( bool isFromPrompt )
     {
         m_pParent->HandleMessage( GUI_MSG_GOTO_SCREEN, GUI_SCREEN_ID_MEMORY_CARD );
     }
-#endif // RAD_WIN32
+#endif // RAD_MODERN_PLATFORM
 }
 
 
@@ -1038,16 +991,11 @@ CGuiScreenSaveGame::SaveGame()
     }
 #endif
 
-#ifdef RAD_WIN32
+#ifdef RAD_MODERN_PLATFORM
 #ifdef RAD_PC
     m_guiManager->DisplayMessage( CGuiScreenMessage::MSG_ID_SAVING_GAME_PC, this );
 #else
     m_guiManager->DisplayMessage( CGuiScreenMessage::MSG_ID_SAVING_GAME_XBOX, this );
 #endif
 #endif
-
-#ifdef RAD_TVOS
-    m_guiManager->DisplayMessage( CGuiScreenMessage::MSG_ID_SAVING_GAME_XBOX, this );
-#endif
 }
-

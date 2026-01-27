@@ -115,6 +115,7 @@ public:
     virtual void UberContinue( void );
     virtual void Stop ( void );
     virtual void SetPitch( float pitch );
+    inline void SnapPitchToTarget( void );
     
     virtual void ChangeTrim( daSoundGroup groupName, float newTrim ); 
     virtual void ChangeFaderTrim( daSoundGroup groupName, float newTrim );
@@ -401,6 +402,12 @@ inline void daSoundClipStreamPlayer::SetPitch( float pitch )
     radSoundVerifyAnalogPitch( pitch );     
     
     m_Pitch = pitch;
+}
+
+inline void daSoundClipStreamPlayer::SnapPitchToTarget( void )
+{
+    m_CurrentPitch = m_VaryingPitch * m_Pitch;
+    radSoundVerifyAnalogPitch( m_CurrentPitch );
 }
 
 inline void daSoundClipStreamPlayer::CalculateNewVaryingTrim( void )

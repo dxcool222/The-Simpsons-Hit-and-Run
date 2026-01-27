@@ -939,3 +939,142 @@ CGuiScreenPurchaseRewards::UpdateRewardPrice()
             {
                 // special case for German for proper grammar
                 //
+                sprintf( buffer, "Für %d %s", rewardCost, coinsText );
+            }
+            else
+#endif // PAL
+            {
+                sprintf( buffer, "%d %s", rewardCost, coinsText );
+            }
+
+            rAssert( strlen( buffer ) < sizeof( buffer ) );
+
+            rAssert( m_rewardPrice != NULL );
+            m_rewardPrice->SetString( 0, buffer );
+
+            // only show accept label if user has enough money to purchase OR
+            // if reward is already unlocked
+            //
+            this->SetButtonVisible( BUTTON_ICON_ACCEPT, GetCoinManager()->GetBankValue() >= rewardCost );
+
+            HeapMgr()->PopHeap( GMA_LEVEL_HUD );
+        }
+    }
+
+    // update purchase label
+    //
+    rAssert( m_purchaseLabel != NULL );
+    m_purchaseLabel->SetIndex( currentPreviewObject->isUnlocked ? 1 : 0 );
+}
+
+void
+CGuiScreenPurchaseRewards::PurchaseReward()
+{
+    const PreviewObject* currentPreviewObject = this->GetCurrentPreviewObject();
+    rAssert( currentPreviewObject != NULL );
+
+    if( currentPreviewObject->isUnlocked )
+    {
+        // reward is already unlocked, so just load it
+        //
+        this->LoadSelectedReward();
+    }
+    else
+    {
+        bool boughtReward = GetRewardsManager()->BuyMerchandise( GetGameplayManager()->GetCurrentLevelIndex(),
+                                                                 currentPreviewObject->name );
+
+        if( boughtReward )
+        {
+            // hide lock overlay
+            //
+            rAssert( m_lockedOverlay != NULL );
+            m_lockedOverlay->SetVisible( false );
+
+            // update hud coins current item count
+            //
+            CGuiScreenHud* currentHud = GetCurrentHud();
+            if( currentHud != NULL )
+            {
+                HudCoinCollected* hudCoinCollected = static_cast<HudCoinCollected*>( currentHud->GetEventHandler( CGuiScreenHud::HUD_EVENT_HANDLER_COIN_COLLECTED ) );
+                rAssert( hudCoinCollected != NULL );
+                hudCoinCollected->SetCurrentItemCount( GetCoinManager()->GetBankValue() );
+                hudCoinCollected->Start();
+            }
+
+            m_isPurchasingReward = true;
+            m_elapsedCoinDecrementTotalTime = 0;
+            m_elapsedCoinDecrementTime = 0;
+        }
+        else
+        {
+            rAssertMsg( false, "This should not happen!" );
+        }
+    }
+}
+
+void
+CGuiScreenPurchaseRewards::LoadSelectedReward()
+{
+    // unload 3D model first before loading reward
+    //
+    this->Unload3DModel();
+
+    m_isLoading = true; // set loading flag
+    m_isLoadingReward = true; // we're loading the selected reward
+
+    if( m_currentType == Merchandise::SELLER_INTERIOR )
+    {
+        Character* currentCharacter = GetCharacterManager()->GetCharacter( 0 );
+
+        char characterName[ 16 ];
+        tUID characterUID = currentCharacter->GetUID();
+
+        if( characterUID == CHARACTER_NAME_HOMER )
+        {
+            strcpy( characterName, "homer" );
+        }
+        else if( characterUID == CHARACTER_NAME_BART )
+        {
+            strcpy( characterName, "bart" );
+        }
+        else if( characterUID == CHARACTER_NAME_LISA )
+        {
+            strcpy( characterName, "lisa" );
+        }
+        else if( characterUID == CHARACTER_NAME_MARGE )
+        {
+            strcpy( characterName, "marge" );
+        }
+        else if( characterUID == CHARACTER_NAME_APU )
+        {
+            strcpy( characterName, "apu" );
+        }
+        else
+        {
+            rAssert( false );
+        }
+
+        GetCharacterManager()->SwapData( currentCharacter,
+                                         m_previewClothing[ m_currentPreviewClothing ].name,
+                                         characterName );
+
+       //Chuck: Save the skin they are buy/changing into as the current skin
+        GetCharacterSheetManager()->SetCurrentSkin(GetGameplayManager()->GetCurrentLevelIndex(),m_previewClothing[ m_currentPreviewClothing ].name);
+
+        GetCharacterManager()->PreloadCharacter( m_previewClothing[ m_currentPreviewClothing ].name,
+                                                 characterName,
+                                                 this );
+
+        //for the HitnRun system
+        GetEventManager()->TriggerEvent( EVENT_SWITCH_SKIN, NULL );
+
+    }
+    else
+    {
+        ActionButton::SummonVehiclePhone::LoadVehicle( m_previewVehicles[ m_currentPreviewVehicle ].name,
+                                                       m_previewVehicles[ m_currentPreviewVehicle ].filename,
+                                                       VehicleCentral::ALLOW_DRIVER );
+    }
+}
+

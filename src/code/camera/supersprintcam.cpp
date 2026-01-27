@@ -21,6 +21,7 @@
 //========================================
 // Project Includes
 //========================================
+#include <main/platformdef.h>
 #include <camera/supersprintcam.h>
 #include <camera/supercamconstants.h>
 #include <camera/supercamcontroller.h>
@@ -95,7 +96,7 @@ static float CAMERA_FOV[ RenderEnums::MAX_LEVEL - RenderEnums::numLevels ] =
 
 #endif
 
-#if defined(RAD_WIN32) || defined(RAD_TVOS)
+#ifdef RAD_MODERN_PLATFORM
 //Straight copy of xbox. Will figure out later.
 static float CAMERA_VALUES[ RenderEnums::MAX_LEVEL - RenderEnums::numLevels ][ 3 ] = 
 {

@@ -26,6 +26,7 @@
 #include <input/inputmanager.h>
 #include <memory/srrmemory.h>
 #include <events/eventmanager.h>
+#include <main/platformdef.h>
 
 #include <raddebug.hpp>     // Foundation
 #include <radmath/trig.hpp> // RadMath
@@ -48,7 +49,7 @@ const tColour DEFAULT_OUTLINE_COLOUR( 0, 0, 0, 192 );
 const float SLIDER_FULL_RANGE_TIME = 2000; // in milliseconds
 const int SELECTION_MADE_DURATION = 250; // in milliseconds
 
-#if defined(RAD_WIN32) || defined(RAD_TVOS)
+#ifdef RAD_MODERN_PLATFORM
 const float ARROW_SCALE = 0.5f;
 #endif
 
@@ -283,7 +284,7 @@ GuiMenuItem* CGuiMenu::AddMenuItem( Scrooby::BoundedDrawable* pItem,
         if( pItemValueArrowL != NULL )
         {
             pItemValueArrowL->SetVisible( false );
-#if defined(RAD_WIN32) || defined(RAD_TVOS)
+#ifdef RAD_MODERN_PLATFORM
             pItemValueArrowL->ScaleAboutCenter( ARROW_SCALE );
 #endif
             m_menuItems[ m_numItems ]->m_itemValueArrowL = pItemValueArrowL;
@@ -291,7 +292,7 @@ GuiMenuItem* CGuiMenu::AddMenuItem( Scrooby::BoundedDrawable* pItem,
         if( pItemValueArrowR != NULL )
         {
             pItemValueArrowR->SetVisible( false );
-#if defined(RAD_WIN32) || defined(RAD_TVOS)
+#ifdef RAD_MODERN_PLATFORM
             pItemValueArrowR->ScaleAboutCenter( ARROW_SCALE );
 #endif
             m_menuItems[ m_numItems ]->m_itemValueArrowR = pItemValueArrowR;
@@ -306,7 +307,7 @@ GuiMenuItem* CGuiMenu::AddMenuItem( Scrooby::BoundedDrawable* pItem,
             //
             m_menuItems[ m_numItems ]->SetDisplayOutline( true );
         }
-#if defined(RAD_WIN32) || defined(RAD_TVOS)
+#ifdef RAD_MODERN_PLATFORM
         pItem->SetVerticalJustification( Scrooby::Top );
 #endif
     }

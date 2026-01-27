@@ -673,12 +673,18 @@ void DialogQueueElement::PlayDialog( SimpsonsSoundPlayer& player1,
                                      DialogCompleteCallback* dialogCallback )
 {
     Character* npcPtr;
+    const bool snapPitch = ( m_dialog->GetEvent() == EVENT_CONVERSATION_INIT_DIALOG )
+                           || ( m_dialog->GetEvent() == EVENT_IN_GAMEPLAY_CONVERSATION );
 
     m_lineDoneCallback = lineCallback;
     m_dialogDoneCallback = dialogCallback;
 
     m_player1 = &player1;
     m_player2 = &player2;
+
+    m_player1->EnablePitchSnapOnCapture( snapPitch );
+    m_player2->EnablePitchSnapOnCapture( snapPitch );
+
     m_dialog->PlayLine( m_linesPlayed, *m_player1, this );
     if( m_dialog->GetNumDialogLines() >= 2 )
     {

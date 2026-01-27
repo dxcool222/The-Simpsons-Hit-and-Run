@@ -28,6 +28,7 @@
 #include <sound/soundrenderer/soundallocatedresource.h>
 #include <sound/soundrenderer/playermanager.h>
 #include <sound/soundrenderer/idasoundresource.h>
+#include <sound/soundrenderer/soundplayer.h>
 
 #include <memory/srrmemory.h>
 
@@ -74,6 +75,7 @@ SimpsonsSoundPlayer::SimpsonsSoundPlayer() :
     
 {
     m_Type = Type_NonPositional;
+    m_snapPitchOnCapture = false;
     //
     // Get resource manager ptr and sound loader ptr if that hasn't been done yet
     //
@@ -284,6 +286,12 @@ bool SimpsonsSoundPlayer::QueueSound( IDaSoundResource* resource,
                                         resource,
                                         Type_Positional == m_Type );
     rAssert( m_playa != NULL );
+
+    if( m_snapPitchOnCapture )
+    {
+        m_playa->SetPitch( 1.0f );
+        m_playa->SnapPitchToTarget();
+    }
 
     //
     // Reset trim, just to be safe

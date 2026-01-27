@@ -23,6 +23,7 @@
 #include <mission/missionmanager.h>
 #include <mission/missionstage.h>
 #include <mission/objectives/missionobjective.h>
+#include <main/platformdef.h>
 
 #include <raddebug.hpp> // Foundation
 #include <Group.h>
@@ -100,7 +101,7 @@ CGuiScreenLetterBox::CGuiScreenLetterBox
     m_buttonIcons[ BUTTON_ICON_ACCEPT ] = m_skipButton->GetGroup( "AcceptLabel" );
     m_buttonIcons[ BUTTON_ICON_BACK ] = m_skipButton->GetGroup( "BackLabel" );
 
-#if defined(RAD_WIN32) || defined(RAD_TVOS)
+#ifdef RAD_MODERN_PLATFORM
     Scrooby::Sprite* skipIcon = m_skipLabel->GetSprite( "Skip" );
     if( skipIcon )
     {

@@ -27,7 +27,9 @@
 #include <p3d/loadmanager.hpp>
 #include <p3d/utility.hpp>
 
-#if defined(RAD_WIN32) || defined(RAD_TVOS)
+#include <main/platformdef.h>
+
+#ifdef RAD_SDL_PLATFORM
 #include <SDL.h>  // for SDL_PollEvent...
 #endif
 
@@ -495,14 +497,14 @@ void Game::Run()
 
         BEGIN_PROFILE( "GameLoop" )
 
-        unsigned newTime =  radTimeGetMilliseconds();
+        unsigned newTime = radTimeGetMilliseconds();
         unsigned elapsed = newTime - time;
         time = newTime;
 
         //
         // Service the windows message loop.
         //
-#if defined(RAD_WIN32) || defined(RAD_TVOS)
+#ifdef RAD_SDL_PLATFORM
         SDL_Event msg;
         while( SDL_PollEvent( &msg ) )
         {
@@ -526,7 +528,7 @@ void Game::Run()
                 }               
             }
         }
-#endif // RAD_WIN32 || RAD_TVOS
+#endif // RAD_SDL_PLATFORM
 
         //
         // Service the GameFlow and RenderFlow.

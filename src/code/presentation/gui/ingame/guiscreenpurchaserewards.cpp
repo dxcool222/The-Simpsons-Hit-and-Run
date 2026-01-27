@@ -50,6 +50,7 @@
 #include <Pure3dObject.h>
 
 #include <string.h>
+#include <main/platformdef.h>
 
 //===========================================================================
 // Global Data, Local Data, Local Classes
@@ -114,7 +115,7 @@ CGuiScreenPurchaseRewards::CGuiScreenPurchaseRewards
     Scrooby::Page* pPage = m_pScroobyScreen->GetPage( "Rewards" );
     rAssert( pPage != NULL );
 
-#if defined(RAD_WIN32) || defined(RAD_TVOS)
+#ifdef RAD_MODERN_PLATFORM
     m_leftArrow = pPage->GetGroup( "Arrows" )->GetSprite( "LeftArrow" );
     m_rightArrow = pPage->GetGroup( "Arrows" )->GetSprite( "RightArrow" );
     m_leftArrow->ScaleAboutCenter( 1.3f );
@@ -939,7 +940,7 @@ CGuiScreenPurchaseRewards::UpdateRewardPrice()
             {
                 // special case for German for proper grammar
                 //
-                sprintf( buffer, "Für %d %s", rewardCost, coinsText );
+                sprintf( buffer, "FÃ¼r %d %s", rewardCost, coinsText );
             }
             else
 #endif // PAL

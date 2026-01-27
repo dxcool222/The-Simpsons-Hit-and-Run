@@ -15,6 +15,7 @@
 //===========================================================================
 #include <presentation/gui/ingame/hudevents/hudcardcollected.h>
 #include <presentation/gui/utility/specialfx.h>
+#include <main/platformdef.h>
 
 #include <cards/cardgallery.h>
 #include <mission/gameplaymanager.h>
@@ -26,7 +27,7 @@
 #include <Sprite.h>
 #include <Text.h>
 
-#if defined(RAD_WIN32) || defined(RAD_TVOS)
+#ifdef RAD_MODERN_PLATFORM
 const float HUDCARD_THUMBNAIL_SCALE = 0.44f;
 #endif
 
@@ -173,7 +174,7 @@ HudCardCollected::Update( float elapsedTime )
                     // fade in card image (and scale up)
                     //
                     m_cardImage->SetAlpha( percentageDone );
-#if defined(RAD_WIN32) || defined(RAD_TVOS)
+#ifdef RAD_MODERN_PLATFORM
                     m_cardImage->ScaleAboutCenter( percentageDone * HUDCARD_THUMBNAIL_SCALE );
 #else
                     m_cardImage->ScaleAboutCenter( percentageDone );
@@ -219,7 +220,7 @@ HudCardCollected::Update( float elapsedTime )
                 {
                     m_cardImage->SetAlpha( 1.0f );
                     m_itemsCount->SetAlpha( 1.0f );
-#if defined(RAD_WIN32) || defined(RAD_TVOS)
+#ifdef RAD_MODERN_PLATFORM
                     m_cardImage->ScaleAboutCenter( HUDCARD_THUMBNAIL_SCALE );
 #endif
 
@@ -284,7 +285,7 @@ HudCardCollected::Update( float elapsedTime )
                     m_cardText->ResetTransformation();
                     m_cardText->ScaleAboutCenter( 1.0f + percentageDone * 0.5f );
 
-#if defined(RAD_WIN32) || defined(RAD_TVOS)
+#ifdef RAD_MODERN_PLATFORM
                     m_cardImage->ScaleAboutCenter( HUDCARD_THUMBNAIL_SCALE );
 #endif
 

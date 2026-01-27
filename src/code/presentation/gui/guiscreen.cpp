@@ -23,6 +23,7 @@
 #include <presentation/gui/utility/specialfx.h>
 
 #include <events/eventmanager.h>
+#include <main/platformdef.h>
 
 #include <App.h>
 #include <Screen.h>
@@ -219,7 +220,7 @@ CGuiScreen::CGuiScreen
             m_buttonIcons[ BUTTON_ICON_ACCEPT ] = pPage->GetGroup( "AcceptLabel" );
             rAssert( m_buttonIcons[ BUTTON_ICON_ACCEPT ] != NULL );
 
-#if defined(RAD_WIN32) || defined(RAD_TVOS)
+#ifdef RAD_MODERN_PLATFORM
             // resize the button icon
             //
             Scrooby::Sprite* icon = m_buttonIcons[ BUTTON_ICON_ACCEPT ]->GetSprite( "Accept" );
@@ -248,7 +249,7 @@ CGuiScreen::CGuiScreen
             m_buttonIcons[ BUTTON_ICON_BACK ] = pPage->GetGroup( "BackLabel" );
             rAssert( m_buttonIcons[ BUTTON_ICON_BACK ] != NULL );
 
-#if defined(RAD_WIN32) || defined(RAD_TVOS)
+#ifdef RAD_MODERN_PLATFORM
             // resize the button icon
             //
             Scrooby::Sprite* icon = m_buttonIcons[ BUTTON_ICON_BACK ]->GetSprite( "Back" );

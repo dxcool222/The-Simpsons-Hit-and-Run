@@ -146,7 +146,8 @@ class FeText
         bool mOverrideStringBuffer : 1;
         bool mDisplayShadow : 1;
         bool mDisplayOutline : 1;
-#ifdef RAD_WIN32
+
+#if defined(RAD_WIN32) || defined(RAD_TVOS)
         bool mIsBoundingBoxStretched : 1;
 #endif
         // TC: Added text outline support

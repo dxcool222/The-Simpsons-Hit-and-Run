@@ -28,6 +28,7 @@
 //========================================
 // Project Includes
 //========================================
+#include <main/platformdef.h>
 #include <contexts/bootupcontext.h>
 #include <worldsim/coins/sparkle.h>
 #include <memory/srrmemory.h>
@@ -43,10 +44,10 @@
 // Global Data, Local Data, Local Classes
 //
 //******************************************************************************
-#if defined( RAD_XBOX ) || defined( RAD_WIN32 ) || defined( RAD_TVOS )
+#if defined( RAD_XBOX ) || defined( RAD_MODERN_PLATFORM )
     #ifdef RAD_RELEASE
         static const float FRAME_RATE = 60.0f;
-    #elif RAD_TUNE
+    #elif defined( RAD_TUNE )
         static const float FRAME_RATE = 30.0f;
     #else
         static const float FRAME_RATE = 15.0f;

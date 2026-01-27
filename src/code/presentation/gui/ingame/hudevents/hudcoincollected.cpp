@@ -16,6 +16,7 @@
 #include <presentation/gui/ingame/hudevents/hudcoincollected.h>
 #include <presentation/gui/utility/specialfx.h>
 #include <presentation/gui/guiscreen.h>
+#include <main/platformdef.h>
 
 #include <worldsim/coins/coinmanager.h>
 
@@ -58,7 +59,7 @@ HudCoinCollected::HudCoinCollected( Scrooby::Page* pPage )
     m_numCoins->SetSpriteMode( Scrooby::SPRITE_BITMAP_TEXT );
     m_numCoins->CreateBitmapTextBuffer( BITMAP_TEXT_BUFFER_SIZE );
     m_numCoins->SetBitmapTextSpacing( NUMERIC_TEXT_SPACING );
-#if defined(RAD_WIN32) || defined(RAD_TVOS)
+#ifdef RAD_MODERN_PLATFORM
     m_numCoins->Translate( 70, 0 );
     m_numCoins->ScaleAboutCenter( 0.5f );
 #endif

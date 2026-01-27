@@ -85,6 +85,8 @@ class SimpsonsSoundPlayer
         void OnPlaybackComplete();
         
         bool IsInUse() { return( m_playa != NULL ); }
+
+        void EnablePitchSnapOnCapture( bool enable ) { m_snapPitchOnCapture = enable; }
         
         void SetPitch( float pitch );
         void SetTrim( float trim );
@@ -128,6 +130,8 @@ class SimpsonsSoundPlayer
         // Callback object for playback completion
         //
         SoundRenderingPlayerCallback* m_callback;
+
+        bool m_snapPitchOnCapture : 1;
 
 };
 

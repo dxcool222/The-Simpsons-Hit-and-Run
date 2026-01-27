@@ -48,6 +48,7 @@
 #include <pddi/pddi.hpp>
 
 #include <string.h>
+#include <main/platformdef.h>
 
 //******************************************************************************
 //
@@ -273,7 +274,7 @@ void FMVPlayer::Stop()
 // Return:      void 
 //
 //=============================================================================
-#if defined(RAD_WIN32) || defined(RAD_TVOS)
+#ifdef RAD_MODERN_PLATFORM
 void FMVPlayer::ForceStop()
 { 
     // Force a clear screen.
@@ -350,7 +351,7 @@ void FMVPlayer::Initialize( radMemoryAllocator Allocator )
     m_refIRadMoviePlayer = ::radMoviePlayerCreate2( Allocator );
     rAssert( m_refIRadMoviePlayer != NULL );
 
-#if defined(RAD_XBOX) || defined(RAD_GAMECUBE) || defined(RAD_WIN32) || defined(RAD_TVOS)
+#if defined(RAD_XBOX) || defined(RAD_GAMECUBE) || defined(RAD_MODERN_PLATFORM)
     m_refIRadMoviePlayer->Initialize(
         refIRadMovieRenderLoop,
         refIRadMovieRenderStrategy );

@@ -26,6 +26,7 @@
 #include <mission/rewards/rewardsmanager.h>
 #include <mission/rewards/reward.h>
 #include <worldsim/coins/coinmanager.h>
+#include <main/platformdef.h>
 
 #include <Screen.h>
 #include <Page.h>
@@ -243,7 +244,7 @@ IGuiScreenRewards::IGuiScreenRewards( Scrooby::Screen* pScreen,
     m_statsOverlayButton = pPage->GetGroup( "ToggleView" );
     m_statsOverlayButtonLabel = pPage->GetText( "ToggleView" );
 
-#if defined(RAD_WIN32) || defined(RAD_TVOS)
+#ifdef RAD_MODERN_PLATFORM
     // resize the button icon
     //
     if( m_statsOverlayButton != NULL )

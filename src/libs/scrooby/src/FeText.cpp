@@ -66,7 +66,7 @@ FeText::FeText( const tName& name, int x, int y )
     mOverrideStringBuffer( false ),
     mDisplayShadow( false ),
     mDisplayOutline( false ),
-#ifdef RAD_WIN32
+#if defined(RAD_WIN32) || defined(RAD_TVOS)
     mIsBoundingBoxStretched( false ),
 #endif
     mOutlineColour( 0, 0, 0, 192 )
@@ -147,12 +147,12 @@ void FeText::Display() //Override
         p3d::stack->Scale( scale, scale, 1.0f );
         ResetText();
 
-#ifdef RAD_WIN32
+#if defined(RAD_WIN32) || defined(RAD_TVOS)
         // TC: for PC sku, the source fonts are actually twice as big (for higher resolution display),
         //     so we need to scale them back down to the intended size
         //
         p3d::stack->Scale( 0.5f, 0.5f, 1.0f );
-#endif // RAD_WIN32
+#endif // RAD_WIN32 || RAD_TVOS
 
         int formatting = m_horizontalJustification == Scrooby::Centre ? CENTRE_X : 0;
 
@@ -410,6 +410,7 @@ bool FeText::IsPointInBoundingRect( float x, float y )
     int ix, iy;
 
     // convert from p3d point to scrooby screen point.
+
     x = (x/2.0f) + 0.5f;
     y = (((y*ASPECT)/2.0f) + 0.5f)/ASPECT;
     InverseNormalizeCoord( x, y, ix, iy );
@@ -429,7 +430,7 @@ void FeText::Reset()
 
 void FeText::ReCalculateAlignment()
 {
-#ifdef RAD_WIN32
+#if defined(RAD_WIN32) || defined(RAD_TVOS)
     if( !mIsBoundingBoxStretched )
     {
         // TC: for PC sku, the source fonts are actually twice as big (for higher resolution display),
@@ -438,7 +439,7 @@ void FeText::ReCalculateAlignment()
         mIsBoundingBoxStretched = true;
         FeBoundedDrawable::StretchBoundingBox( 2.0f, 1.0f );
     }
-#endif // RAD_WIN32
+#endif // RAD_WIN32 || RAD_TVOS
 
     m_offsetX = 0;
     m_offsetY = 0;
@@ -466,7 +467,7 @@ void FeText::ReCalculateAlignment()
         height = (mFont->GetTextHeight( FeApp::GetInstance()->GetTextBuffer() )) * scale;
         NormalizeCoord( m_width, m_height, boxWidth, boxHeight );
 
-#ifdef RAD_WIN32
+#if defined(RAD_WIN32) || defined(RAD_TVOS)
         // TC: for PC sku, the source fonts are actually twice as big (for higher resolution display),
         //     so the width of the current text string is only half as wide; this is needed for proper
         //     right alignment

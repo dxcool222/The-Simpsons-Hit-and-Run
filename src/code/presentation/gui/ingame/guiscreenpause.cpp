@@ -32,6 +32,8 @@
 #include <mission/gameplaymanager.h>
 #include <worldsim/coins/coinmanager.h>
 
+#include <main/platformdef.h>
+
 // Pure3D
 #include <p3d/utility.hpp>
 #include <p3d/sprite.hpp>
@@ -148,7 +150,7 @@ CGuiScreenPause::CGuiScreenPause
     pPage = m_pScroobyScreen->GetPage( "PauseFgd" );
     if( pPage != NULL )
     {
-#if defined(RAD_WIN32) || defined(RAD_TVOS)
+#ifdef RAD_MODERN_PLATFORM
         pPage->SetVisible( false );
 #endif
 

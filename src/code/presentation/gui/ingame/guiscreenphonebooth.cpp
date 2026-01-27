@@ -55,11 +55,12 @@
 #include <raddebug.hpp> // Foundation
 
 #include <string.h>
+#include <main/platformdef.h>
 
 //===========================================================================
 // Global Data, Local Data, Local Classes
 //===========================================================================
-#if defined(RAD_WIN32) || defined(RAD_TVOS)
+#ifdef RAD_MODERN_PLATFORM
 const float VEHICLE_CORRECTION_SCALE = 0.93f;
 const float VEHICLE_DAMAGED_CORRECTION_SCALE = 0.93f;
 const float HUSK_CORRECTION_SCALE = 1.4f;
@@ -259,7 +260,7 @@ MEMTRACK_PUSH_GROUP( "CGUIScreenPhoneBooth" );
     Scrooby::Page* pPage = m_pScroobyScreen->GetPage( "PhoneBooth" );
 	rAssert( pPage != NULL );
 
-#if defined(RAD_WIN32) || defined(RAD_TVOS)
+#ifdef RAD_MODERN_PLATFORM
     m_leftArrow = pPage->GetGroup( "Arrows" )->GetSprite( "LeftArrow" );
     m_rightArrow = pPage->GetGroup( "Arrows" )->GetSprite( "RightArrow" );
     m_leftArrow->ScaleAboutCenter( 1.3f );
@@ -297,7 +298,7 @@ MEMTRACK_PUSH_GROUP( "CGUIScreenPhoneBooth" );
     {
         repairCostCoins->ResetTransformation();
         repairCostCoins->Translate( DAMAGED_INFO_TRANSLATE_X, 0 );
-#if defined(RAD_WIN32) || defined(RAD_TVOS)
+#ifdef RAD_MODERN_PLATFORM
         repairCostCoins->Translate( 70, 0 );
         repairCostCoins->ScaleAboutCenter( 0.5f );
 #endif

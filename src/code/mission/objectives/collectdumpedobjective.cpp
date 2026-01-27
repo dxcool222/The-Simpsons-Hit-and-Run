@@ -20,6 +20,7 @@
 //========================================
 // Project Includes
 //========================================
+#include <main/platformdef.h>
 #include <mission/objectives/collectdumpedobjective.h>
 #include <mission/gameplaymanager.h>
 
@@ -65,7 +66,7 @@ static const unsigned int CD_DEFAULT_TIMEOUT = 5000;
 static const unsigned int DEFAULT_DUMP_LIFETIME = 15000;
 #endif
 
-#if defined( DEBUGWATCH ) || defined( RAD_WIN32 ) || defined( RAD_TVOS )
+#if defined( DEBUGWATCH ) || defined( RAD_MODERN_PLATFORM )
 extern float DEFAULT_DIST;
 #else
 extern const float DEFAULT_DIST;

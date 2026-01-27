@@ -24,6 +24,7 @@
 #include <events/eventmanager.h>
 #include <main/commandlineoptions.h>
 #include <sound/soundmanager.h>
+#include <main/platformdef.h>
 
 // Scrooby
 #include <Screen.h>
@@ -84,7 +85,7 @@ CGuiScreenTutorial::CGuiScreenTutorial
     rAssert( m_tutorialMessage != NULL );
     m_tutorialMessage->SetSpriteMode( Scrooby::SPRITE_BITMAP_TEXT );
     m_tutorialMessage->CreateBitmapTextBuffer( MAX_TUTORIAL_MESSAGE_LENGTH );
-#if defined(RAD_WIN32) || defined(RAD_TVOS)
+#ifdef RAD_MODERN_PLATFORM
     m_tutorialMessage->ScaleAboutCenter( 0.25f );
     m_tutorialMessage->SetBitmapTextLineSpacing( 30 );
 #else

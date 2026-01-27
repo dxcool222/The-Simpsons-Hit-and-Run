@@ -68,6 +68,8 @@
 #include <Screen.h>
 #include <Sprite.h>
 
+#include <main/platformdef.h>
+
 //===========================================================================
 // Global Data, Local Data, Local Classes
 //===========================================================================
@@ -238,7 +240,7 @@ MEMTRACK_PUSH_GROUP( "CGUIScreenHud" );
     m_timer->CreateBitmapTextBuffer( BITMAP_TEXT_BUFFER_SIZE );
     m_timer->SetBitmapTextSpacing( NUMERIC_TEXT_SPACING );
     m_defaultTimerColour = m_timer->GetColour();
-#if defined(RAD_WIN32) || defined(RAD_TVOS)
+#ifdef RAD_MODERN_PLATFORM
     m_timer->Translate( -25, 0 );
     m_timer->ScaleAboutCenter( 0.5f );
 #endif
@@ -251,7 +253,7 @@ MEMTRACK_PUSH_GROUP( "CGUIScreenHud" );
     m_parTime->SetSpriteMode( Scrooby::SPRITE_BITMAP_TEXT );
     m_parTime->CreateBitmapTextBuffer( BITMAP_TEXT_BUFFER_SIZE );
     m_parTime->SetBitmapTextSpacing( NUMERIC_TEXT_SPACING );
-#if defined(RAD_WIN32) || defined(RAD_TVOS)
+#ifdef RAD_MODERN_PLATFORM
     m_parTime->Translate( -25, 0 );
     m_parTime->ScaleAboutCenter( 0.5f );
 #endif
@@ -264,7 +266,7 @@ MEMTRACK_PUSH_GROUP( "CGUIScreenHud" );
     m_collectibles->SetSpriteMode( Scrooby::SPRITE_BITMAP_TEXT );
     m_collectibles->CreateBitmapTextBuffer( BITMAP_TEXT_BUFFER_SIZE );
     m_collectibles->SetBitmapTextSpacing( NUMERIC_TEXT_SPACING );
-#if defined(RAD_WIN32) || defined(RAD_TVOS)
+#ifdef RAD_MODERN_PLATFORM
     m_collectibles->Translate( -25, 0 );
     m_collectibles->ScaleAboutCenter( 0.5f );
 #endif
@@ -278,7 +280,7 @@ MEMTRACK_PUSH_GROUP( "CGUIScreenHud" );
     m_position->SetSpriteMode( Scrooby::SPRITE_BITMAP_TEXT );
     m_position->CreateBitmapTextBuffer( BITMAP_TEXT_BUFFER_SIZE );
     m_position->SetBitmapTextSpacing( NUMERIC_TEXT_SPACING );
-#if defined(RAD_WIN32) || defined(RAD_TVOS)
+#ifdef RAD_MODERN_PLATFORM
     m_position->Translate( -25, 0 );
     m_position->ScaleAboutCenter( 0.5f );
 #endif
@@ -291,7 +293,7 @@ MEMTRACK_PUSH_GROUP( "CGUIScreenHud" );
     m_lap->SetSpriteMode( Scrooby::SPRITE_BITMAP_TEXT );
     m_lap->CreateBitmapTextBuffer( BITMAP_TEXT_BUFFER_SIZE );
     m_lap->SetBitmapTextSpacing( NUMERIC_TEXT_SPACING );
-#if defined(RAD_WIN32) || defined(RAD_TVOS)
+#ifdef RAD_MODERN_PLATFORM
     m_lap->Translate( -25, 0 );
     m_lap->ScaleAboutCenter( 0.5f );
 #endif
@@ -327,7 +329,7 @@ MEMTRACK_PUSH_GROUP( "CGUIScreenHud" );
     m_missionFailedSprite->CreateBitmapTextBuffer( 256 );
     m_missionFailedSprite->SetBitmapText( GetTextBibleString( "MISSION_FAILED" ) );
     m_missionFailedSprite->SetBitmapTextLineSpacing( 10 );
-#if defined(RAD_WIN32) || defined(RAD_TVOS)
+#ifdef RAD_MODERN_PLATFORM
     m_missionFailedSprite->ScaleAboutCenter( 0.5f );
 #endif
 
@@ -1462,7 +1464,7 @@ CGuiScreenHud::SetNumCoinsDisplay( Scrooby::Sprite* pSprite )
         pSprite->SetBitmapTextSpacing( NUMERIC_TEXT_SPACING );
         pSprite->SetVisible( false ); // hide by default
 
-#if defined(RAD_WIN32) || defined(RAD_TVOS)
+#ifdef RAD_MODERN_PLATFORM
         pSprite->ResetTransformation();
         pSprite->Translate( 70, 0 );
         pSprite->ScaleAboutCenter( 0.5f );
@@ -1732,19 +1734,19 @@ CGuiScreenHud::UpdateOverlays( unsigned int elapsedTime )
     //
     if( m_overlays[ HUD_ACTION_BUTTON ]->IsVisible() )
     {
-#if defined(RAD_WIN32) || defined(RAD_TVOS)
+#ifdef RAD_MODERN_PLATFORM
         const float PULSE_AMPLITUDE = 0.10f;
         const float PULSE_PERIOD = 600.0f; // in milliseconds
 #else
-        const float PULSE_AMPLITUDE = 0.25f;
-        const float PULSE_PERIOD = 500.0f; // in milliseconds
+        const float PULSE_AMPLITUDE = 0.20f;
+        const float PULSE_PERIOD = 300.0f; // in milliseconds
 #endif
 
         float scale = GuiSFX::Pulse( (float)m_elapsedTime[ HUD_ACTION_BUTTON ],
                                      PULSE_PERIOD,
                                      1.0f,
                                      PULSE_AMPLITUDE );
-#if defined( RAD_WIN32 ) && !defined( RAD_PC )
+#ifdef RAD_MODERN_PLATFORM
         scale *= 0.5f;
 #endif
 
@@ -1758,17 +1760,15 @@ CGuiScreenHud::UpdateOverlays( unsigned int elapsedTime )
     //
     if( m_overlays[ HUD_MISSION_COMPLETE ]->IsVisible() )
     {
-        static float MISSION_COMPLETE_DISPLAY_TIME = 2500; // in milliseconds
-
-#if defined(RAD_WIN32) || defined(RAD_TVOS)
+#ifdef RAD_MODERN_PLATFORM
         bool done = GuiSFX::Flash( m_missionComplete,
                                    (float)m_elapsedTime[ HUD_MISSION_COMPLETE ],
-                                    MISSION_COMPLETE_DISPLAY_TIME,
-                                    3, 0.625f, 0.6f );
+                                    2500,
+                                    1, 0.625f, 0.6f );
 #else
         bool done = GuiSFX::Flash( m_missionComplete,
                                    (float)m_elapsedTime[ HUD_MISSION_COMPLETE ],
-                                   MISSION_COMPLETE_DISPLAY_TIME,
+                                   2500,
                                    3, 1.25f, 1.2f );
 #endif
 

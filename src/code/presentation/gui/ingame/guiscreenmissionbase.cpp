@@ -35,6 +35,7 @@
 #include <presentation/gui/ingame/guiscreenmissionbase.h>
 #include <presentation/gui/ingame/guiscreenmissionselect.h>
 #include <presentation/gui/utility/transitions.h>
+#include <main/platformdef.h>
 #include <sound/soundmanager.h>
 #include <worldsim/redbrick/vehicle.h>
 #include <worldsim/coins/coinmanager.h>
@@ -116,7 +117,7 @@ GuiSFX::PulseScale    g_TitlePulse(          "TitlePulse"           );
 const float VEHICLE_ODDS_HARD_THRESHOLD = 3.0f;
 const float VEHICLE_ODDS_MEDIUM_THRESHOLD = 2.0f;
 
-#if defined(RAD_WIN32) || defined(RAD_TVOS)
+#ifdef RAD_MODERN_PLATFORM
 const float MISSION_BITMAP_CORRECTION_SCALE = 0.67f;
 #endif
 
@@ -125,7 +126,7 @@ const float MISSION_BITMAP_CORRECTION_SCALE = 0.67f;
 //===========================================================================
 
 //===========================================================================
-// CGuiScreenMissionSuccess::CGuiScreenMissionSuccess
+// CGuiScreenMissionBase::CGuiScreenMissionBase
 //===========================================================================
 // Description: Constructor.
 //
@@ -357,7 +358,7 @@ CGuiScreenMissionBase::CGuiScreenMissionBase( Scrooby::Screen* pScreen, CGuiEnti
     g_OutroHideEverything.SetDrawable( m_Foreground );
 
     m_missionStartBitmap->SetRawSprite( NULL );
-#if defined(RAD_WIN32) || defined(RAD_TVOS)
+#ifdef RAD_MODERN_PLATFORM
     m_missionStartBitmap->ResetTransformation();
     m_missionStartBitmap->ScaleAboutCenter( MISSION_BITMAP_CORRECTION_SCALE );
     m_missionStartBitmap->Translate( -71, -32 );  // These are trial & error numbers that hopefully work.

@@ -20,6 +20,7 @@
 //========================================
 // Project Includes
 //========================================
+#include <main/platformdef.h>
 #include <mission/objectives/collectibleobjective.h>
 
 #include <events/eventmanager.h>
@@ -52,7 +53,7 @@
 // Global Data, Local Data, Local Classes
 //
 //******************************************************************************
-#if defined( DEBUGWATCH ) || defined( RAD_WIN32 ) || defined( RAD_TVOS )
+#if defined( DEBUGWATCH ) || defined( RAD_MODERN_PLATFORM )
 float DEFAULT_DIST = 5.0f;
 #else
 const float DEFAULT_DIST = 5.0f;

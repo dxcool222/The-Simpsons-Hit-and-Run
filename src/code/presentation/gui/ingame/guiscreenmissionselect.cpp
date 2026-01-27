@@ -28,6 +28,7 @@
 #include <mission/charactersheet/charactersheetmanager.h>
 #include <mission/charactersheet/charactersheet.h>
 #include <render/Enums/RenderEnums.h>
+#include <main/platformdef.h>
 
 #include <raddebug.hpp> // Foundation
 #include <Page.h>
@@ -41,7 +42,7 @@
 // Global Data, Local Data, Local Classes
 //===========================================================================
 
-#if defined(RAD_WIN32) || defined(RAD_TVOS)
+#ifdef RAD_MODERN_PLATFORM
 const float LEVEL_BAR_CORRECTION_SCALE = 1.0f;
 #else
 const float LEVEL_BAR_CORRECTION_SCALE = 2.0f;
@@ -84,7 +85,7 @@ MEMTRACK_PUSH_GROUP( "CGUIScreenMissionSelect" );
     Scrooby::Group* levelBar = pPage->GetGroup( "Level" );
     rAssert( levelBar != NULL );
 
-#if defined(RAD_WIN32) || defined(RAD_TVOS)
+#ifdef RAD_MODERN_PLATFORM
     m_leftArrow = levelBar->GetSprite( "LArrowBgd" );
     rAssert( m_leftArrow != NULL );
     m_leftArrow->ScaleAboutCenter( 1.7f );
