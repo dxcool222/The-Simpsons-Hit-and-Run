@@ -155,23 +155,13 @@ void daSoundFileInstance::CreateFileDataSource(
     
     *ppFds = radSoundRsdFileDataSourceCreate( GMA_AUDIO_PERSISTENT );
     (*ppFds)->AddRef( );
-    
-#ifdef RAD_TVOS
-    // tvOS: Pass NULL to let RSD header determine actual encoding (PCM vs RADP)
-    (*ppFds)->InitializeFromFileName(
-        fileName,
-        true,
-        0,
-        IRadSoundHalAudioFormat::Milliseconds,
-        NULL );
-#else
+
     (*ppFds)->InitializeFromFileName(
         fileName,
         true,
         0,
         IRadSoundHalAudioFormat::Milliseconds,
         SoundNucleusGetStreamFileAudioFormat( ) );
-#endif
         
 }
 

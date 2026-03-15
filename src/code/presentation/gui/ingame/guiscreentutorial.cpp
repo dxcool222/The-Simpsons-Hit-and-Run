@@ -100,6 +100,11 @@ CGuiScreenTutorial::CGuiScreenTutorial
     m_disableTutorial = pPage->GetGroup( "DisableTutorial" );
     rAssert( m_disableTutorial != NULL );
 
+#ifdef RAD_TVOS
+    m_disableTutorial->ResetTransformation();
+    m_disableTutorial->ScaleAboutCenter( 0.7f );
+#endif
+
     Scrooby::Text* disableTutorial = m_disableTutorial->GetText( "DisableTutorial" );
     if( disableTutorial != NULL )
     {

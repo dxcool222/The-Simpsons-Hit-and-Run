@@ -303,11 +303,6 @@ void ZoneEventLocator::SetZone( const char* zone )
         }
     }
 
-    if( startPosn < zoneStrLength && mZone[startPosn] != '\0' )
-    {
-        mLoadZones.Add( startPosn );
-    }
-
 }
 
 //=============================================================================

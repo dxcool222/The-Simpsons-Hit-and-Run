@@ -1024,7 +1024,37 @@ pglPrimBuffer::pglPrimBuffer(pglContext* c, pddiPrimType type, unsigned vertexFo
     vertexBuffer = indexBuffer = vertexArray = 0;
 
     primType = type;
-    vertexType = vertexFormat;
+
+    // GLES path only supports a subset of PDDI vertex components.
+    // If we compute stride using unsupported flags, attribute offsets become wrong and
+    // affected meshes can render invisible while collision still works.
+    unsigned supported = vertexFormat;
+    // Keep UV count but clamp to 2 (UV0 + UV1).
+    unsigned uvCount = supported & PDDI_V_UVMASK;
+    if ( uvCount > 2 )
+    {
+        uvCount = 2;
+    }
+    supported &= ~PDDI_V_UVMASK;
+    supported |= uvCount;
+
+    // If COLOUR2 is used, fall back to a single vertex colour set (channel 0).
+    if ( supported & PDDI_V_COLOUR2 )
+    {
+        supported &= ~PDDI_V_COLOUR2;
+        supported &= ~PDDI_V_COLOUR_MASK;
+        supported |= PDDI_V_COLOUR;
+    }
+
+    // Drop unsupported/unused components.
+    supported &= ~PDDI_V_SPECULAR;
+    supported &= ~PDDI_V_BINORMAL;
+    supported &= ~PDDI_V_TANGENT;
+    supported &= ~PDDI_V_SIZE;
+    supported &= ~PDDI_V_W;
+
+    // POSITION bit isn't used by the GLES packing (position is always present), but keep it for consistency.
+    vertexType = supported;
 
     allocated = nVertex;
     
@@ -1036,7 +1066,7 @@ pglPrimBuffer::pglPrimBuffer(pglContext* c, pddiPrimType type, unsigned vertexFo
     unsigned currentOffset = 12;
     
     // Normal: 3 floats = 12 bytes
-    if(vertexFormat & PDDI_V_NORMAL)
+    if(vertexType & PDDI_V_NORMAL)
     {
         normalOffset = currentOffset;
         currentOffset += 12;
@@ -1044,7 +1074,7 @@ pglPrimBuffer::pglPrimBuffer(pglContext* c, pddiPrimType type, unsigned vertexFo
     }
     
     // UV sets: check how many UV channels are needed (lower 4 bits = UV count)
-    unsigned uvCount = vertexFormat & 0xf;
+    uvCount = vertexType & PDDI_V_UVMASK;
     if(uvCount >= 1)
     {
         uv0Offset = currentOffset;
@@ -1061,11 +1091,15 @@ pglPrimBuffer::pglPrimBuffer(pglContext* c, pddiPrimType type, unsigned vertexFo
     }
     
     // Colour: 4 bytes (RGBA)
-    if(vertexFormat & PDDI_V_COLOUR)
+    if(vertexType & PDDI_V_COLOUR)
     {
         colourOffset = currentOffset;
         currentOffset += 4;
         stride += 4;
+    }
+    if(stride < 36)
+    {
+        stride = 36;
     }
 
 #ifdef RAD_TVOS
@@ -1088,7 +1122,7 @@ pglPrimBuffer::pglPrimBuffer(pglContext* c, pddiPrimType type, unsigned vertexFo
     unsigned char* ptr = buffer;
     coord = (float*)ptr;
     
-    if(vertexFormat & PDDI_V_NORMAL)
+    if(vertexType & PDDI_V_NORMAL)
     {
         normal = (float*)(buffer + normalOffset);
     }
@@ -1103,7 +1137,7 @@ pglPrimBuffer::pglPrimBuffer(pglContext* c, pddiPrimType type, unsigned vertexFo
         uv1 = (float*)(buffer + uv1Offset);
     }
     
-    if(vertexFormat & PDDI_V_COLOUR)
+    if(vertexType & PDDI_V_COLOUR)
     {
         colour = buffer + colourOffset;
     }
@@ -1186,6 +1220,10 @@ static unsigned int s_lastSkipLogFrame = 0;
 void pglPrimBuffer::Display(void)
 {
     MICROPROFILE_SCOPEI("PDDI", "pglPrimBuffer::Display", MP_RED);
+
+    bool rebuiltOnce = false;
+
+rebuild_attempt:
 
     // Guard against freed/invalid buffer data
     // Note: For indexed geometry, total=0 is valid - indexCount is used instead
@@ -1397,6 +1435,18 @@ void pglPrimBuffer::Display(void)
         SDL_Log("[PRIM_INVALID] frame=%u vertexArray=%u vertexBuffer=%u indexBuffer=%u valid=%d",
                 frame, vertexArray, vertexBuffer, indexBuffer, (int)valid);
 #endif
+        if(!rebuiltOnce)
+        {
+            rebuiltOnce = true;
+            valid = false;
+            if(!vertexArray)
+                vertexArray = 0;
+            if(!vertexBuffer)
+                vertexBuffer = 0;
+            if(indexCount && indices && !indexBuffer)
+                indexBuffer = 0;
+            goto rebuild_attempt;
+        }
         return;
     }
 
@@ -1413,7 +1463,8 @@ void pglPrimBuffer::Display(void)
     }
     else
     {
-        glDrawArrays(primTypeTable[primType], 0, total);
+        if(total)
+            glDrawArrays(primTypeTable[primType], 0, total);
 #ifdef RAD_TVOS
         s_tvosDrawCallCount++;
         s_tvosVertexCount += total;
@@ -1773,7 +1824,7 @@ void pglContext::SetTextureEnvironment(const pglTextureEnv* texEnv)
     if(texEnv->texture)
     {
         // Select appropriate shader program based on shader type
-        if(texEnv->usesLightmap && lightmapProgram[texEnv->lit])
+        if(texEnv->usesLightmap && texEnv->lightmapTexture && lightmapProgram[texEnv->lit])
         {
             // Use lightmap shader for geometry that needs base * lightmap blending
             SetShaderProgram(lightmapProgram[texEnv->lit]);

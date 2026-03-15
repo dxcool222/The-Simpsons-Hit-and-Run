@@ -151,6 +151,10 @@ MEMTRACK_PUSH_GROUP( "GUIScreenPrompt" );
     m_promptMessage->SetTextMode( Scrooby::TEXT_WRAP );
     m_promptMessage->ResetTransformation();
     m_promptMessage->ScaleAboutCenter(0.9f);
+#ifdef RAD_TVOS
+    m_promptMessage->ResetTransformation();
+    m_promptMessage->ScaleAboutCenter(0.7f);
+#endif
 
 
 	pPage = m_pScroobyScreen->GetPage( "TVFrame" );

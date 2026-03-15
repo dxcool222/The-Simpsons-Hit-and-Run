@@ -89,6 +89,9 @@ void pglProgram::SetTextureEnvironment(const pglTextureEnv* texEnv)
     TvosLogUniformGlError( "SetTextureEnvironment.sampler" );
 #endif
 
+    if (lightmapSampler >= 0)
+        glUniform1i(lightmapSampler, 1);
+
     if (texEnv->lit)
     {
         UniformColour(acm, texEnv->ambient);
@@ -100,16 +103,26 @@ void pglProgram::SetTextureEnvironment(const pglTextureEnv* texEnv)
         TvosLogUniformGlError( "SetTextureEnvironment.lit" );
 #endif
     }
+    else
+    {
+        UniformColour(acm, pddiColour(-1));
+        UniformColour(ecm, pddiColour(-1));
+        UniformColour(dcm, pddiColour(-1));
+        UniformColour(scm, pddiColour(-1));
+        glUniform1f(srm, 0.0f);
+    }
 
-    if (texEnv->alphaTest && alpharef >= 0)
+    if (texEnv->alphaTest)
     {
         PDDIASSERT(texEnv->alphaCompareMode == PDDI_COMPARE_GREATER ||
             texEnv->alphaCompareMode == PDDI_COMPARE_GREATEREQUAL);
+    }
+
+    if (alpharef >= 0)
         glUniform1f(alpharef, texEnv->alphaTest ? texEnv->alphaRef : 0.0f);
 #ifdef RAD_TVOS
-        TvosLogUniformGlError( "SetTextureEnvironment.alpharef" );
+    TvosLogUniformGlError( "SetTextureEnvironment.alpharef" );
 #endif
-    }
 }
 
 void pglProgram::SetLightState(int handle, const pddiLight* lightState)

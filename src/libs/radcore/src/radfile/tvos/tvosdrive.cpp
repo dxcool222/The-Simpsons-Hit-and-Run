@@ -88,6 +88,14 @@ static std::filesystem::path radTvosGuessAbsolutePath( const char* requested )
         return std::filesystem::path();
     }
 
+    // Normalize path separators. Many asset references are authored on Windows.
+    std::string req( requested );
+    for ( char& c : req )
+    {
+        if ( c == '\\' ) c = '/';
+    }
+    requested = req.c_str();
+
     // Convert drive style paths (APP:/PREF:) to actual absolute paths.
     if ( strncmp( requested, s_TvosAppDriveName, strlen( s_TvosAppDriveName ) ) == 0 )
     {
@@ -110,6 +118,125 @@ static std::filesystem::path radTvosGuessAbsolutePath( const char* requested )
 
     // Otherwise assume relative to the app base directory.
     return radTvosGetBasePath() / requested;
+}
+
+static bool radTvosResolveCaseInsensitive( const std::filesystem::path& absolutePath, std::filesystem::path* outResolved )
+{
+    if ( outResolved == NULL )
+    {
+        return false;
+    }
+
+    std::error_code ec;
+    if ( std::filesystem::exists( absolutePath, ec ) )
+    {
+        *outResolved = absolutePath;
+        return true;
+    }
+
+    // Only attempt case-insensitive resolution within the app bundle.
+    // This is to tolerate Windows-authored asset references on a case-sensitive filesystem.
+    const std::filesystem::path appRoot = radTvosGetAppRoot();
+    const std::filesystem::path basePath = radTvosGetBasePath();
+
+    auto tryResolveUnderRoot = [&]( const std::filesystem::path& root ) -> bool {
+        std::error_code ec2;
+        std::filesystem::path rel;
+        try
+        {
+            rel = std::filesystem::relative( absolutePath, root, ec2 );
+        }
+        catch ( ... )
+        {
+            return false;
+        }
+        if ( ec2 )
+        {
+            return false;
+        }
+
+        // If it's not actually under this root, bail.
+        if ( rel.empty() || rel.native().find( ".." ) == 0 )
+        {
+            return false;
+        }
+
+        std::filesystem::path cur = root;
+        for ( const auto& part : rel )
+        {
+            const std::string want = part.string();
+            if ( want.empty() )
+            {
+                continue;
+            }
+
+            // If exact match exists, take it.
+            std::filesystem::path exact = cur / part;
+            if ( std::filesystem::exists( exact, ec2 ) )
+            {
+                cur = exact;
+                continue;
+            }
+
+            // Otherwise, scan current directory for a case-insensitive match.
+            bool matched = false;
+            std::filesystem::directory_iterator it( cur, ec2 );
+            if ( ec2 )
+            {
+                return false;
+            }
+
+            for ( const auto& entry : it )
+            {
+                const std::string have = entry.path().filename().string();
+                if ( have.size() != want.size() )
+                {
+                    continue;
+                }
+
+                bool eq = true;
+                for ( size_t i = 0; i < want.size(); ++i )
+                {
+                    char a = want[i];
+                    char b = have[i];
+                    if ( a >= 'A' && a <= 'Z' ) a = (char)(a - 'A' + 'a');
+                    if ( b >= 'A' && b <= 'Z' ) b = (char)(b - 'A' + 'a');
+                    if ( a != b ) { eq = false; break; }
+                }
+                if ( eq )
+                {
+                    cur = entry.path();
+                    matched = true;
+                    break;
+                }
+            }
+
+            if ( !matched )
+            {
+                return false;
+            }
+        }
+
+        if ( std::filesystem::exists( cur, ec2 ) )
+        {
+            *outResolved = cur;
+            return true;
+        }
+        return false;
+    };
+
+    std::filesystem::path resolved;
+    if ( tryResolveUnderRoot( appRoot ) )
+    {
+        return true;
+    }
+    if ( tryResolveUnderRoot( basePath ) )
+    {
+        return true;
+    }
+
+    (void)resolved;
+    return false;
 }
 
 // Counters and throttling for success logging
@@ -231,6 +358,15 @@ extern "C" FILE* fopen( const char* path, const char* mode )
     typedef FILE* ( *Fn )( const char*, const char* );
     static Fn s_real = (Fn)dlsym( RTLD_NEXT, "fopen" );
     FILE* f = s_real ? s_real( path, mode ) : NULL;
+    if ( f == NULL && s_real != NULL && path != NULL && mode != NULL && strchr( mode, 'w' ) == NULL )
+    {
+        std::filesystem::path abs = radTvosGuessAbsolutePath( path );
+        std::filesystem::path resolved;
+        if ( radTvosResolveCaseInsensitive( abs, &resolved ) )
+        {
+            f = s_real( resolved.c_str(), mode );
+        }
+    }
     if ( f == NULL )
     {
         int err = errno;
@@ -249,6 +385,15 @@ extern "C" FILE* radTvos_fopen_nocancel( const char* path, const char* mode )
         s_real = (Fn)dlsym( RTLD_NEXT, "fopen" );
     }
     FILE* f = s_real ? s_real( path, mode ) : NULL;
+    if ( f == NULL && s_real != NULL && path != NULL && mode != NULL && strchr( mode, 'w' ) == NULL )
+    {
+        std::filesystem::path abs = radTvosGuessAbsolutePath( path );
+        std::filesystem::path resolved;
+        if ( radTvosResolveCaseInsensitive( abs, &resolved ) )
+        {
+            f = s_real( resolved.c_str(), mode );
+        }
+    }
     if ( f == NULL )
     {
         int err = errno;

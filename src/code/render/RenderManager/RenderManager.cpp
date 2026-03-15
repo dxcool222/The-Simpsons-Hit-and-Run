@@ -1305,7 +1305,11 @@ void RenderManager::OnProcessRequestsComplete( void* pUserData )
 
             if(i<mpZEL->GetNumLoadZones())
             {
+#ifdef RAD_TVOS
+                sprintf(spSomeDamnFile,"art/%s",mpZEL->GetLoadZone(i));
+#else
                 sprintf(spSomeDamnFile,"art\\%s",mpZEL->GetLoadZone(i));
+#endif
 
                 (*(int*)pUserData) &= ~RenderEnums::CompletionOnlyMask;
                 (*(int*)pUserData) |= RenderEnums::DynamicLoadComplete;
@@ -1385,7 +1389,11 @@ END_PROFILE( "Find Load Zone" );
                 //////////////////////////////////////////////////////////////////////////
                 if(i<mpZEL->GetNumLoadZones())
                 {
+#ifdef RAD_TVOS
+                    sprintf(spSomeDamnFile,"art/%s",mpZEL->GetLoadZone(i));
+#else
                     sprintf(spSomeDamnFile,"art\\%s",mpZEL->GetLoadZone(i));
+#endif
 
                     msLayer &= ~RenderEnums::CompletionOnlyMask;
                     msLayer |= RenderEnums::DynamicLoadComplete;
@@ -1722,6 +1730,24 @@ BEGIN_PROFILE( "RenderManager HandleEvent" );
                 data.interiorName = pZEL->GetUID();
                 data.sectionName = tEntity::MakeUID(pZEL->GetInteriorSection());
                 data.first = mbFirstDynamicZone;
+#ifdef RAD_TVOS
+                {
+                    rReleasePrintf( "[TVOS][INTERIOR][LOAD_START] zelName=%s interiorUID=0x%08X interiorSection=%s numLoadZones=%d numDumpZones=%d\n",
+                                    pZEL->GetName() ? pZEL->GetName() : "(null)",
+                                    (unsigned int)pZEL->GetUID(),
+                                    pZEL->GetInteriorSection() ? pZEL->GetInteriorSection() : "(null)",
+                                    pZEL->GetNumLoadZones(),
+                                    pZEL->GetNumDumpZones() );
+                    for( int zi = 0; zi < pZEL->GetNumLoadZones(); ++zi )
+                    {
+                        rReleasePrintf( "[TVOS][INTERIOR][LOAD_START]   loadZone[%d]=%s\n", zi, pZEL->GetLoadZone( zi ) ? pZEL->GetLoadZone( zi ) : "(null)" );
+                    }
+                    for( int zi = 0; zi < pZEL->GetNumDumpZones(); ++zi )
+                    {
+                        rReleasePrintf( "[TVOS][INTERIOR][LOAD_START]   dumpZone[%d]=%s\n", zi, pZEL->GetDumpZone( zi ) ? pZEL->GetDumpZone( zi ) : "(null)" );
+                    }
+                }
+#endif
                 GetEventManager()->TriggerEvent( EVENT_INTERIOR_LOAD_START, reinterpret_cast<void*>( &data ) );
             }
 
@@ -1884,7 +1910,11 @@ END_PROFILE( "Find Load Zone" );
             //////////////////////////////////////////////////////////////////////////
             if(i<mpZEL->GetNumLoadZones())
             {
+#ifdef RAD_TVOS
+               sprintf(spSomeDamnFile,"art/%s",mpZEL->GetLoadZone(i));
+#else
                sprintf(spSomeDamnFile,"art\\%s",mpZEL->GetLoadZone(i));
+#endif
 #ifdef RAD_TVOS
                // TIMELINE: Log file path for timeline zones
                {

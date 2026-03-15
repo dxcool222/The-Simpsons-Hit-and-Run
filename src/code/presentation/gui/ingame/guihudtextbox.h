@@ -19,8 +19,14 @@
 // External Constants
 //===========================================================================
 
+// NOTE: These are authored for legacy console resolutions; tvOS at 1080p needs a smaller baseline.
+#ifdef RAD_TVOS
+const float MESSAGE_TEXT_SCALE = 0.6f;
+const float MESSGAE_TEXT_HORIZONTAL_STRETCH = 1.0f;
+#else
 const float MESSAGE_TEXT_SCALE = 0.8f;
 const float MESSGAE_TEXT_HORIZONTAL_STRETCH = 1.1f;
+#endif
 
 #if defined(RAD_WIN32) || defined(RAD_TVOS)
 const float MESSAGE_BOX_CORRECTION_SCALE = 1.0f;

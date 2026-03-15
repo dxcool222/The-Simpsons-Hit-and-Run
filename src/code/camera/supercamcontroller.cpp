@@ -82,7 +82,7 @@ SuperCamController::~SuperCamController()
 //=============================================================================
 void SuperCamController::LoadControllerMappings( unsigned int controllerId )
 {
-    #if defined(RAD_CONSOLE) && defined(RAD_WIN32) || defined(RAD_XBOX)
+    #if ( defined(RAD_CONSOLE) && defined(RAD_WIN32) ) || defined(RAD_XBOX) || defined(RAD_TVOS)
     ClearMap(0);
     Map( "RightStickX",     stickX,             0, controllerId );
     Map( "RightStickY",     stickY,             0, controllerId );

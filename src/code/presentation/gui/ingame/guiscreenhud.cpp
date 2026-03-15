@@ -243,6 +243,11 @@ MEMTRACK_PUSH_GROUP( "CGUIScreenHud" );
 #ifdef RAD_MODERN_PLATFORM
     m_timer->Translate( -25, 0 );
     m_timer->ScaleAboutCenter( 0.5f );
+#ifdef RAD_TVOS
+    m_timer->ResetTransformation();
+    m_timer->Translate( -25, 0 );
+    m_timer->ScaleAboutCenter( 0.4f );
+#endif
 #endif
 
     pGroup = m_missionOverlays->GetGroup( "ParTime" );
@@ -256,6 +261,11 @@ MEMTRACK_PUSH_GROUP( "CGUIScreenHud" );
 #ifdef RAD_MODERN_PLATFORM
     m_parTime->Translate( -25, 0 );
     m_parTime->ScaleAboutCenter( 0.5f );
+#ifdef RAD_TVOS
+    m_parTime->ResetTransformation();
+    m_parTime->Translate( -25, 0 );
+    m_parTime->ScaleAboutCenter( 0.4f );
+#endif
 #endif
 
     pGroup = m_missionOverlays->GetGroup( "Collectibles" );
@@ -1746,8 +1756,13 @@ CGuiScreenHud::UpdateOverlays( unsigned int elapsedTime )
                                      PULSE_PERIOD,
                                      1.0f,
                                      PULSE_AMPLITUDE );
+
 #ifdef RAD_MODERN_PLATFORM
         scale *= 0.5f;
+#endif
+
+#ifdef RAD_TVOS
+        scale *= 0.8f;
 #endif
 
         m_actionButton->ResetTransformation();

@@ -28,7 +28,13 @@
 // Global Data, Local Data, Local Classes
 //===========================================================================
 
-#ifdef RAD_MODERN_PLATFORM
+#if defined( RAD_TVOS )
+const float HNR_MESSAGE_SCALE = 1.25f;
+const float HNR_MESSAGE_BUSTED_SCALE = 1.45f;
+const float HNR_TICKET_SCALE = 0.85f;
+const float HNR_MESSAGE_BUSTED_TILT_ANGLE = -10.0f; // in degrees
+const tColour HNR_MESSAGE_BUSTED_COLOUR( 43, 89, 249 );
+#elif defined( RAD_MODERN_PLATFORM )
 const float HNR_MESSAGE_SCALE = 1.75f;
 const float HNR_MESSAGE_BUSTED_SCALE = 2.0f;
 const float HNR_TICKET_SCALE = 1.0f;

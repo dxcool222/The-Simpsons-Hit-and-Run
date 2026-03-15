@@ -427,6 +427,17 @@ void radSoundHalBufferWin::LoadAsync
     m_refIRadSoundHalBufferLoadCallback = pIRadSoundHalBufferLoadCallback;
 
 #ifdef RAD_TVOS
+    if ( m_Streaming && m_UseBufferQueuing && m_AttachedSource != 0 )
+    {
+        if ( m_LastDataSourcePtr != pIRadSoundHalDataSource )
+        {
+            FlushBufferQueue( );
+            m_LastDataSourcePtr = pIRadSoundHalDataSource;
+        }
+    }
+#endif
+
+#ifdef RAD_TVOS
     // ALWAYS LOG ENTRY for mono streaming - this fires UNCONDITIONALLY
     unsigned int channels = m_refIRadSoundHalAudioFormat->GetNumberOfChannels();
     if (channels == 1 && m_Streaming) {
@@ -531,29 +542,55 @@ void radSoundHalBufferWin::OnBufferLoadComplete( unsigned int dataSourceFrames )
 
         if (queueBuf != 0) {
             if (m_ForcedStereo) {
-                // Existing mono->stereo path expects 16-bit mono samples
-                unsigned int stereoBytes = dataSourceFrames * 4;
-                int16_t* monoData = (int16_t*)m_pLockedLoadBuffer;
-                int16_t* stereoData = (int16_t*)radMemoryAlloc(GetThisAllocator(), stereoBytes);
-                if (stereoData != NULL) {
-                    for (unsigned int i = 0; i < dataSourceFrames; i++) {
-                        int16_t sample = monoData[i];
-                        stereoData[i * 2 + 0] = sample;
-                        stereoData[i * 2 + 1] = sample;
-                    }
-                    alBufferData(queueBuf, AL_FORMAT_STEREO16, stereoData, stereoBytes,
-                                 m_refIRadSoundHalAudioFormat->GetSampleRate());
-                    ALenum bufErr = alGetError();
-                    radMemoryFree(stereoData);
-                    if (bufErr != AL_NO_ERROR) {
-                        SDL_Log("[QUEUE_ERR] alBufferData failed: err=0x%x buf=%u bytes=%u", bufErr, queueBuf, stereoBytes);
+                const unsigned int bits = m_refIRadSoundHalAudioFormat->GetBitResolution();
+                if (bits == 8) {
+                    unsigned int stereoBytes = dataSourceFrames * 2;
+                    uint8_t* monoData = (uint8_t*)m_pLockedLoadBuffer;
+                    uint8_t* stereoData = (uint8_t*)radMemoryAlloc(GetThisAllocator(), stereoBytes);
+                    if (stereoData != NULL) {
+                        for (unsigned int i = 0; i < dataSourceFrames; i++) {
+                            uint8_t sample = monoData[i];
+                            stereoData[i * 2 + 0] = sample;
+                            stereoData[i * 2 + 1] = sample;
+                        }
+                        alBufferData(queueBuf, AL_FORMAT_STEREO8, stereoData, stereoBytes,
+                                     m_refIRadSoundHalAudioFormat->GetSampleRate());
+                        ALenum bufErr = alGetError();
+                        radMemoryFree(stereoData);
+                        if (bufErr != AL_NO_ERROR) {
+                            SDL_Log("[QUEUE_ERR] alBufferData failed: err=0x%x buf=%u bytes=%u", bufErr, queueBuf, stereoBytes);
+                            ReturnStreamBuffer(queueBuf);
+                            queueBuf = 0;
+                        }
+                    } else {
+                        SDL_Log("[QUEUE_ERR] ALLOC FAILED! stereoBytes=%u", stereoBytes);
                         ReturnStreamBuffer(queueBuf);
                         queueBuf = 0;
                     }
                 } else {
-                    SDL_Log("[QUEUE_ERR] ALLOC FAILED! stereoBytes=%u", stereoBytes);
-                    ReturnStreamBuffer(queueBuf);
-                    queueBuf = 0;
+                    unsigned int stereoBytes = dataSourceFrames * 4;
+                    int16_t* monoData = (int16_t*)m_pLockedLoadBuffer;
+                    int16_t* stereoData = (int16_t*)radMemoryAlloc(GetThisAllocator(), stereoBytes);
+                    if (stereoData != NULL) {
+                        for (unsigned int i = 0; i < dataSourceFrames; i++) {
+                            int16_t sample = monoData[i];
+                            stereoData[i * 2 + 0] = sample;
+                            stereoData[i * 2 + 1] = sample;
+                        }
+                        alBufferData(queueBuf, AL_FORMAT_STEREO16, stereoData, stereoBytes,
+                                     m_refIRadSoundHalAudioFormat->GetSampleRate());
+                        ALenum bufErr = alGetError();
+                        radMemoryFree(stereoData);
+                        if (bufErr != AL_NO_ERROR) {
+                            SDL_Log("[QUEUE_ERR] alBufferData failed: err=0x%x buf=%u bytes=%u", bufErr, queueBuf, stereoBytes);
+                            ReturnStreamBuffer(queueBuf);
+                            queueBuf = 0;
+                        }
+                    } else {
+                        SDL_Log("[QUEUE_ERR] ALLOC FAILED! stereoBytes=%u", stereoBytes);
+                        ReturnStreamBuffer(queueBuf);
+                        queueBuf = 0;
+                    }
                 }
             } else {
                 alBufferData(queueBuf, format, m_pLockedLoadBuffer, m_LockedLoadBytes,
@@ -696,7 +733,6 @@ void radSoundHalBufferWin::OnBufferLoadComplete( unsigned int dataSourceFrames )
         // For mono streaming: Use buffer QUEUING instead of detach/upload/reattach
         // This allows continuous playback - queued buffers play in sequence without interruption
         if (m_ForcedStereo && m_UseBufferQueuing && m_pLockedLoadBuffer != NULL && dataSourceFrames > 0) {
-            int16_t* monoData = (int16_t*)m_pLockedLoadBuffer;
             ALuint source = m_AttachedSource;
             
             // STEP 1: Unqueue any processed buffers back to the pool
@@ -717,70 +753,130 @@ void radSoundHalBufferWin::OnBufferLoadComplete( unsigned int dataSourceFrames )
             }
             
             if (queueBuf != 0) {
-                // STEP 3: Convert mono to stereo
-                unsigned int stereoBytes = dataSourceFrames * 4;  // 2 bytes per sample * 2 channels
-                int16_t* stereoData = (int16_t*)radMemoryAlloc(GetThisAllocator(), stereoBytes);
-                
-                if (stereoData != NULL) {
-                    for (unsigned int i = 0; i < dataSourceFrames; i++) {
-                        int16_t sample = monoData[i];
-                        stereoData[i * 2 + 0] = sample;  // Left channel
-                        stereoData[i * 2 + 1] = sample;  // Right channel
-                    }
-                    
-                    // STEP 4: Upload stereo data to the queue buffer
-                    alBufferData(queueBuf, AL_FORMAT_STEREO16, stereoData, stereoBytes,
-                                 m_refIRadSoundHalAudioFormat->GetSampleRate());
-                    ALenum bufErr = alGetError();
-                    
-                    if (bufErr == AL_NO_ERROR) {
-                        // STEP 5: Queue the buffer to the source
-                        alSourceQueueBuffers(source, 1, &queueBuf);
-                        ALenum queueErr = alGetError();
-                        
-                        if (queueErr == AL_NO_ERROR) {
-                            m_QueuedCount++;
-                            
-                            // STEP 6: Start playback ONLY if not already playing AND we have queued buffers
-                            ALint sourceState = 0;
-                            alGetSourcei(source, AL_SOURCE_STATE, &sourceState);
-                            
-                            static unsigned int s_queueLogCount = 0;
-                            s_queueLogCount++;
-                            if (s_queueLogCount <= 20 || (s_queueLogCount % 50) == 0) {
-                                ALint queued = 0;
-                                alGetSourcei(source, AL_BUFFERS_QUEUED, &queued);
-                                SDL_Log("[QUEUE_OK] #%u buf=%u queued=%d frames=%u state=%s source=%u queuedCount=%u",
-                                        s_queueLogCount, queueBuf, queued, dataSourceFrames,
-                                        (sourceState == AL_PLAYING) ? "PLAYING" : 
-                                        (sourceState == AL_STOPPED) ? "STOPPED" : "OTHER", source, m_QueuedCount);
-                            }
-                            
-                            // Underrun recovery: if source stopped but we have buffers, restart
-                            if (sourceState != AL_PLAYING && m_QueuedCount > 0) {
-                                alSourcePlay(source);
-                                ALenum playErr = alGetError();
-                                if (playErr != AL_NO_ERROR) {
-                                    SDL_Log("[QUEUE_PLAY] ERROR: alSourcePlay failed err=0x%x", playErr);
-                                } else {
-                                    SDL_Log("[QUEUE_PLAY] Started/resumed playback on source=%u (underrun recovery)", source);
+                const unsigned int bits = m_refIRadSoundHalAudioFormat->GetBitResolution();
+                if (bits == 8) {
+                    unsigned int stereoBytes = dataSourceFrames * 2;
+                    uint8_t* monoData = (uint8_t*)m_pLockedLoadBuffer;
+                    uint8_t* stereoData = (uint8_t*)radMemoryAlloc(GetThisAllocator(), stereoBytes);
+                    if (stereoData != NULL) {
+                        for (unsigned int i = 0; i < dataSourceFrames; i++) {
+                            uint8_t sample = monoData[i];
+                            stereoData[i * 2 + 0] = sample;
+                            stereoData[i * 2 + 1] = sample;
+                        }
+
+                        alBufferData(queueBuf, AL_FORMAT_STEREO8, stereoData, stereoBytes,
+                                     m_refIRadSoundHalAudioFormat->GetSampleRate());
+                        ALenum bufErr = alGetError();
+
+                        if (bufErr == AL_NO_ERROR) {
+                            alSourceQueueBuffers(source, 1, &queueBuf);
+                            ALenum queueErr = alGetError();
+
+                            if (queueErr == AL_NO_ERROR) {
+                                m_QueuedCount++;
+
+                                ALint sourceState = 0;
+                                alGetSourcei(source, AL_SOURCE_STATE, &sourceState);
+
+                                static unsigned int s_queueLogCount = 0;
+                                s_queueLogCount++;
+                                if (s_queueLogCount <= 20 || (s_queueLogCount % 50) == 0) {
+                                    ALint queued = 0;
+                                    alGetSourcei(source, AL_BUFFERS_QUEUED, &queued);
+                                    SDL_Log("[QUEUE_OK] #%u buf=%u queued=%d frames=%u state=%s source=%u queuedCount=%u",
+                                            s_queueLogCount, queueBuf, queued, dataSourceFrames,
+                                            (sourceState == AL_PLAYING) ? "PLAYING" :
+                                            (sourceState == AL_STOPPED) ? "STOPPED" : "OTHER", source, m_QueuedCount);
                                 }
+
+                                if (sourceState != AL_PLAYING && m_QueuedCount > 0) {
+                                    alSourcePlay(source);
+                                    ALenum playErr = alGetError();
+                                    if (playErr != AL_NO_ERROR) {
+                                        SDL_Log("[QUEUE_PLAY] ERROR: alSourcePlay failed err=0x%x", playErr);
+                                    } else {
+                                        SDL_Log("[QUEUE_PLAY] Started/resumed playback on source=%u (underrun recovery)", source);
+                                    }
+                                }
+                            } else {
+                                SDL_Log("[QUEUE_ERR] alSourceQueueBuffers failed: err=0x%x buf=%u source=%u",
+                                        queueErr, queueBuf, source);
+                                ReturnStreamBuffer(queueBuf);
                             }
                         } else {
-                            SDL_Log("[QUEUE_ERR] alSourceQueueBuffers failed: err=0x%x buf=%u source=%u",
-                                    queueErr, queueBuf, source);
-                            ReturnStreamBuffer(queueBuf);  // Return buffer to pool on error
+                            SDL_Log("[QUEUE_ERR] alBufferData failed: err=0x%x buf=%u bytes=%u",
+                                    bufErr, queueBuf, stereoBytes);
+                            ReturnStreamBuffer(queueBuf);
                         }
+
+                        radMemoryFree(stereoData);
                     } else {
-                        SDL_Log("[QUEUE_ERR] alBufferData failed: err=0x%x buf=%u bytes=%u",
-                                bufErr, queueBuf, stereoBytes);
-                        ReturnStreamBuffer(queueBuf);  // Return buffer to pool on error
+                        SDL_Log("[QUEUE_ERR] ALLOC FAILED! stereoBytes=%u", stereoBytes);
+                        ReturnStreamBuffer(queueBuf);
                     }
-                    
-                    radMemoryFree(stereoData);
                 } else {
-                    SDL_Log("[QUEUE_ERR] ALLOC FAILED! stereoBytes=%u", stereoBytes);
-                    ReturnStreamBuffer(queueBuf);
+                    unsigned int stereoBytes = dataSourceFrames * 4;
+                    int16_t* monoData = (int16_t*)m_pLockedLoadBuffer;
+                    int16_t* stereoData = (int16_t*)radMemoryAlloc(GetThisAllocator(), stereoBytes);
+
+                    if (stereoData != NULL) {
+                        for (unsigned int i = 0; i < dataSourceFrames; i++) {
+                            int16_t sample = monoData[i];
+                            stereoData[i * 2 + 0] = sample;
+                            stereoData[i * 2 + 1] = sample;
+                        }
+
+                        alBufferData(queueBuf, AL_FORMAT_STEREO16, stereoData, stereoBytes,
+                                     m_refIRadSoundHalAudioFormat->GetSampleRate());
+                        ALenum bufErr = alGetError();
+
+                        if (bufErr == AL_NO_ERROR) {
+                            alSourceQueueBuffers(source, 1, &queueBuf);
+                            ALenum queueErr = alGetError();
+
+                            if (queueErr == AL_NO_ERROR) {
+                                m_QueuedCount++;
+
+                                ALint sourceState = 0;
+                                alGetSourcei(source, AL_SOURCE_STATE, &sourceState);
+
+                                static unsigned int s_queueLogCount = 0;
+                                s_queueLogCount++;
+                                if (s_queueLogCount <= 20 || (s_queueLogCount % 50) == 0) {
+                                    ALint queued = 0;
+                                    alGetSourcei(source, AL_BUFFERS_QUEUED, &queued);
+                                    SDL_Log("[QUEUE_OK] #%u buf=%u queued=%d frames=%u state=%s source=%u queuedCount=%u",
+                                            s_queueLogCount, queueBuf, queued, dataSourceFrames,
+                                            (sourceState == AL_PLAYING) ? "PLAYING" :
+                                            (sourceState == AL_STOPPED) ? "STOPPED" : "OTHER", source, m_QueuedCount);
+                                }
+
+                                if (sourceState != AL_PLAYING && m_QueuedCount > 0) {
+                                    alSourcePlay(source);
+                                    ALenum playErr = alGetError();
+                                    if (playErr != AL_NO_ERROR) {
+                                        SDL_Log("[QUEUE_PLAY] ERROR: alSourcePlay failed err=0x%x", playErr);
+                                    } else {
+                                        SDL_Log("[QUEUE_PLAY] Started/resumed playback on source=%u (underrun recovery)", source);
+                                    }
+                                }
+                            } else {
+                                SDL_Log("[QUEUE_ERR] alSourceQueueBuffers failed: err=0x%x buf=%u source=%u",
+                                        queueErr, queueBuf, source);
+                                ReturnStreamBuffer(queueBuf);
+                            }
+                        } else {
+                            SDL_Log("[QUEUE_ERR] alBufferData failed: err=0x%x buf=%u bytes=%u",
+                                    bufErr, queueBuf, stereoBytes);
+                            ReturnStreamBuffer(queueBuf);
+                        }
+
+                        radMemoryFree(stereoData);
+                    } else {
+                        SDL_Log("[QUEUE_ERR] ALLOC FAILED! stereoBytes=%u", stereoBytes);
+                        ReturnStreamBuffer(queueBuf);
+                    }
                 }
             } else {
                 SDL_Log("[QUEUE_ERR] No buffer available even after force unqueue!");

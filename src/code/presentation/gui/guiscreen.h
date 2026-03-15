@@ -69,9 +69,7 @@ enum eButtonIcon
     NUM_BUTTON_ICONS
 };
 
-#if defined(RAD_WIN32) || defined(RAD_TVOS)
-const float BUTTON_SCALE = 0.375f;
-#endif
+static const float BUTTON_SCALE = 0.375f;
 
 //===========================================================================
 // Interface Definitions

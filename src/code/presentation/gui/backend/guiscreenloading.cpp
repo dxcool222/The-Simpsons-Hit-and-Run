@@ -49,7 +49,11 @@
 //#define LOADING_BAR_EXPLOSION
 
 #ifdef ENABLE_DYNA_LOADED_IMAGES
-    const char* DYNAMIC_RESOURCES_DIR = "art\\frontend\\dynaload\\images\\loading\\";
+    #if defined( RAD_TVOS )
+        const char* DYNAMIC_RESOURCES_DIR = "art/frontend/dynaload/images/loading/";
+    #else
+        const char* DYNAMIC_RESOURCES_DIR = "art\\frontend\\dynaload\\images\\loading\\";
+    #endif
     const char* DYNA_LOAD_INVENTORY_SECTION = "LoadingScreenImages";
 #endif
 
@@ -57,11 +61,15 @@
 //
 #ifdef RAD_WIN32
     const float LOADING_BGD0_CORRECTION_SCALE = 1.05f;
+#elif defined( RAD_TVOS )
+    const float LOADING_BGD0_CORRECTION_SCALE = 1.05f;
 #else
     const float LOADING_BGD0_CORRECTION_SCALE = 4.2f;
 #endif
 
 #ifdef RAD_WIN32
+    const float LOADING_BGD1_CORRECTION_SCALE = 1.75f;
+#elif defined( RAD_TVOS )
     const float LOADING_BGD1_CORRECTION_SCALE = 1.75f;
 #else
     const float LOADING_BGD1_CORRECTION_SCALE = 8.4f;
@@ -70,6 +78,8 @@
 #ifdef RAD_PS2
     const float LOADING_IMAGE_CORRECTION_SCALE = 1.95f;
 #elif defined( RAD_WIN32 )
+    const float LOADING_IMAGE_CORRECTION_SCALE = 0.925f;
+#elif defined( RAD_TVOS )
     const float LOADING_IMAGE_CORRECTION_SCALE = 0.925f;
 #else
     const float LOADING_IMAGE_CORRECTION_SCALE = 1.85f;
@@ -130,6 +140,11 @@ CGuiScreenLoading::CGuiScreenLoading
     }
 
     Scrooby::Layer* foregroundLayer = pPage->GetLayer( "Foreground" );
+    if( this->IsWideScreenDisplay() && foregroundLayer != NULL )
+    {
+        foregroundLayer->ResetTransformation();
+        this->ApplyWideScreenCorrectionScale( foregroundLayer );
+    }
 
     for( int i = 0; i < NUM_LOADING_OVERLAYS; i++ )
     {
@@ -264,7 +279,10 @@ void CGuiScreenLoading::HandleMessage
                 currentAngle *= -1.0f; // reverse rotation direction
             }
 
-            if( GetGameFlow()->GetCurrentContext() == CONTEXT_LOADING_GAMEPLAY )
+            ContextEnum currentContext = GetGameFlow()->GetCurrentContext();
+            if( currentContext == CONTEXT_LOADING_GAMEPLAY ||
+                currentContext == CONTEXT_LOADING_DEMO ||
+                currentContext == CONTEXT_LOADING_SUPERSPRINT )
             {
                 // update loading bar
                 //

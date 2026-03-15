@@ -335,6 +335,10 @@ MEMTRACK_PUSH_GROUP( "CGUIScreenMainMenu" );
 #ifdef RAD_WIN32
         tvFrame->ScaleAboutCenter( 1.03f );
 #endif
+
+#ifdef RAD_TVOS
+        tvFrame->ScaleAboutCenter( 1.03f );
+#endif
     }
 MEMTRACK_POP_GROUP( "CGUIScreenMainMenu" );
 }

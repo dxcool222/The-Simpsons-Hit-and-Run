@@ -400,7 +400,7 @@ void SoundNucleusTerminate( void )
 
 IRadSoundHalAudioFormat * SoundNucleusGetStreamFileAudioFormat( void )
 {
-#if defined( RAD_GAMECUBE ) || ( defined( RAD_XBOX ) && defined( PAL ) ) || defined( RAD_WIN32 )
+#if defined( RAD_GAMECUBE ) || ( defined( RAD_XBOX ) && defined( PAL ) ) || defined( RAD_WIN32 ) || defined( RAD_TVOS )
         return NULL;
     #else
         return gUnCompressedStreamAudioFormat.m_pAudioFormat;

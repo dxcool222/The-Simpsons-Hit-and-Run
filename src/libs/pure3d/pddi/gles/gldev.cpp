@@ -173,7 +173,7 @@ static pglShaderType DetermineShaderType(const char* name)
     
     // Check for lightmap shader types
     if(strstr(name, "lightmap") || strstr(name, "Lightmap") || strstr(name, "LIGHTMAP") ||
-       strstr(name, "_lm") || strstr(name, "LM") ||
+       strstr(name, "_lm") ||
        strstr(name, "lambert_lm") || strstr(name, "lightmapped"))
     {
 #ifdef RAD_TVOS

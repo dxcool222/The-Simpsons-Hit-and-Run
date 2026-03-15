@@ -215,6 +215,10 @@ void pglMat::SetLightmapTexture(pddiTexture* t)
         texEnv[pass].lightmapTexture->AddRef();
         texEnv[pass].usesLightmap = true;
     }
+    else
+    {
+        texEnv[pass].usesLightmap = false;
+    }
 }
 
 void pglMat::SetUVMode(int mode) 
@@ -379,6 +383,13 @@ void pglMat::SetDevPass(unsigned pass)
     if(texEnv[i].texture)
     {
         texEnv[i].texture->SetGLState();
+
+        if(texEnv[i].usesLightmap && texEnv[i].lightmapTexture)
+        {
+            glActiveTexture(GL_TEXTURE1);
+            texEnv[i].lightmapTexture->SetGLState();
+            glActiveTexture(GL_TEXTURE0);
+        }
 
 #ifdef RAD_TVOS
         // Log shader binding diagnostic ONCE when texture is set

@@ -739,6 +739,19 @@ public:
                 locator->SetNumTriggers( 1, HeapMgr()->GetCurrentHeap() );
                 locator->AddTriggerVolume( trigger );
 
+                {
+                    Avatar* avatar = GetAvatarManager()->GetAvatarForPlayer( 0 );
+                    if( avatar != NULL && avatar->GetCharacter() != NULL )
+                    {
+                        rmt::Vector playerPos;
+                        avatar->GetPosition( playerPos );
+                        if( trigger->Contains( playerPos ) )
+                        {
+                            trigger->SetTrackingPlayer( 0, true );
+                        }
+                    }
+                }
+
 				GetTriggerVolumeTracker()->AddTrigger(trigger);
 
 				locator->AddRef();
@@ -750,7 +763,10 @@ public:
         else
         {
             SoundLoad();
-            Play();
+            if( binding->interiorUID == static_cast< tUID >( 0 ) )
+            {
+                Play();
+            }
         }
 
         rmt::Vector gagPos = binding->gagPos;

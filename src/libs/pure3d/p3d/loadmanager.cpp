@@ -203,19 +203,11 @@ struct LoadStats
          if (h != NULL)
          {
              tLoadStatus status = h->Load(chunkFile, store);
-             if(status == LOAD_ERROR)
-             {
-                 // Not all handlers treat LOAD_ERROR as a fatal condition for the entire file
-                 // (e.g. inventory collisions, some data-only handlers). Log loudly, but keep going.
-                 p3d::printf("Chunk load failed (%x) in %s (handler=%s)\n", chunkFile->GetCurrentID(), file->GetFilename(), typeid(*h).name());
-             }
+             if(fileStatus == LOAD_ERROR) fileStatus = status;
          }
          else
          {
              p3d::printf("Unrecognized chunk (%x) in %s\n",  chunkFile->GetCurrentID(), file->GetFilename());
-             fileStatus = LOAD_ERROR;
-             chunkFile->EndChunk();
-             break;
          }
 
 #ifdef P3D_TRACK_LOAD_STATS

@@ -24,14 +24,6 @@
 #include "system.hpp"
 #include <AL/efx.h>
 
-#ifdef RAD_TVOS
-#if __has_include(<SDL2/SDL.h>)
-    #include <SDL2/SDL.h>
-#else
-    #include <SDL.h>
-#endif
-#endif
-
 //============================================================================
 // Static definitions
 //============================================================================
@@ -62,24 +54,6 @@ radSoundHalListener::radSoundHalListener
     alDistanceModel(AL_INVERSE_DISTANCE_CLAMPED);
 	alAuxiliaryEffectSloti = (LPALAUXILIARYEFFECTSLOTI)alGetProcAddress("alAuxiliaryEffectSloti");
     alGetError();
-
-#ifdef RAD_TVOS
-    // Log listener initialization and verify gain
-    ALfloat listenerGain = 0.0f;
-    alGetListenerf(AL_GAIN, &listenerGain);
-    
-    ALfloat listenerPos[3] = {0, 0, 0};
-    alGetListenerfv(AL_POSITION, listenerPos);
-    
-    SDL_Log("[LISTENER] Initialized: gain=%.3f pos=(%.2f,%.2f,%.2f) distModel=INVERSE_DISTANCE_CLAMPED",
-            listenerGain, listenerPos[0], listenerPos[1], listenerPos[2]);
-    
-    // Ensure listener gain is 1.0 (full volume)
-    if (listenerGain < 0.99f) {
-        SDL_Log("[LISTENER] WARNING: Listener gain is low (%.3f), setting to 1.0", listenerGain);
-        alListenerf(AL_GAIN, 1.0f);
-    }
-#endif
 }
 
 //============================================================================

@@ -17,8 +17,11 @@
 //===========================================================================
 #include <SDL.h>
 
+#include <main/platformdef.h>
+
 #include <presentation/gui/ingame/guiscreenrewards.h>
 #include <presentation/gui/guimenu.h>
+#include <presentation/gui/guiscreen.h>
 #include <presentation/gui/guitextbible.h>
 
 #include <memory/srrmemory.h>
@@ -26,7 +29,6 @@
 #include <mission/rewards/rewardsmanager.h>
 #include <mission/rewards/reward.h>
 #include <worldsim/coins/coinmanager.h>
-#include <main/platformdef.h>
 
 #include <Screen.h>
 #include <Page.h>
@@ -58,6 +60,10 @@ const float LIGHT_OPEN_CLOSE_TRANSITION_TIME = 500.0f; // in msec
 
 const char* PHONE_BOOTH_3DMODEL_CARS_DIR = "art\\frontend\\dynaload\\cars\\";
 const char* PHONE_BOOTH_2DMODEL_CARS_DIR = "art\\frontend\\dynaload\\images\\cars2D\\";
+
+#ifdef RAD_MODERN_PLATFORM
+const float REWARDS_TOGGLE_VIEW_ICON_SCALE = 0.375f;
+#endif
 
 //===========================================================================
 // PhoneBoothStars::
@@ -253,7 +259,7 @@ IGuiScreenRewards::IGuiScreenRewards( Scrooby::Screen* pScreen,
         if( icon != NULL )
         {
             icon->ResetTransformation();
-            icon->ScaleAboutCenter( BUTTON_SCALE );
+            icon->ScaleAboutCenter( REWARDS_TOGGLE_VIEW_ICON_SCALE );
         }
     }
 #endif
