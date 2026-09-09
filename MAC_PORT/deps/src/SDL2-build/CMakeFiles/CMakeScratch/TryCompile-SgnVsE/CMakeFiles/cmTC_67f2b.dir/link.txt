@@ -1,1 +1,0 @@
-/usr/bin/cc  -idirafter "/Volumes/Untitled2/MAC/New project/The-Simpsons-Hit-and-Run-Version-3/MAC_PORT/deps/src/SDL2/src/video/khronos"  -D_GNU_SOURCE=1 -arch arm64 -mmacosx-version-min=14.0 CMakeFiles/cmTC_67f2b.dir/CheckSymbolExists.c.o -o cmTC_67f2b

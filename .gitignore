@@ -1,1 +1,7 @@
 .DS_Store
+# Generated dependency build directories
+MAC_PORT/deps/src/ffmpeg-build/
+MAC_PORT/deps/src/libpng-build/
+MAC_PORT/deps/src/OpenALSoft-build/
+MAC_PORT/deps/src/SDL2-build/
+.DS_Store
