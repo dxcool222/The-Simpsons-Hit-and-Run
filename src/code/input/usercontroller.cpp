@@ -207,6 +207,7 @@ void UserController::OnControllerInputPointChange( unsigned int buttonId, float 
     value = m_xIController2->GetInputPointByIndex( buttonId )->GetCurrentValue( );
 
 #if defined(RAD_TVOS)
+#if defined(RAD_TVOS_INPUT_DIAGNOSTICS)
     {
         IRadControllerInputPoint* p = m_xIController2->GetInputPointByIndex( buttonId );
         const char* type = ( p != NULL ) ? p->GetType() : NULL;
@@ -228,6 +229,7 @@ void UserController::OnControllerInputPointChange( unsigned int buttonId, float 
         }
 
     }
+#endif
 #else
 	{
 		float sign = rmt::Sign( value );

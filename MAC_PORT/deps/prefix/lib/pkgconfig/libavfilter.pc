@@ -1,0 +1,14 @@
+prefix=/Volumes/Untitled2/MAC/srr2mac_build/prefix
+exec_prefix=${prefix}
+libdir=/Volumes/Untitled2/MAC/srr2mac_build/prefix/lib
+includedir=/Volumes/Untitled2/MAC/srr2mac_build/prefix/include
+
+Name: libavfilter
+Description: FFmpeg audio/video filtering library
+Version: 9.12.100
+Requires: 
+Requires.private: libswscale >= 7.5.100, libpostproc >= 57.3.100, libavformat >= 60.16.100, libavcodec >= 60.31.102, libswresample >= 4.12.100, libavutil >= 58.29.100
+Conflicts:
+Libs: -L${libdir}  -lavfilter 
+Libs.private: -framework OpenGL -framework OpenGL -pthread -lm -framework Metal -framework VideoToolbox -framework CoreImage -framework AppKit -framework CoreFoundation -framework CoreMedia -framework CoreVideo -framework CoreServices
+Cflags: -I${includedir}

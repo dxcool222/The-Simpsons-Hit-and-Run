@@ -23,6 +23,10 @@
 #include <sound/soundrenderer/soundrenderingmanager.h>
 #include <sound/soundrenderer/soundresourcemanager.h>
 
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_AUDIO_DIAGNOSTICS )
+#include <sound/diagnostics/audioloaddiag.hpp>
+#endif
+
 #include <memory/srrmemory.h>
 #include <loading/loadingmanager.h>
 #include <worldsim/redbrick/vehicle.h>
@@ -291,6 +295,9 @@ SoundLoader::~SoundLoader()
 //=============================================================================
 void SoundLoader::LevelLoad( RenderEnums::LevelEnum level )
 {
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_AUDIO_DIAGNOSTICS )
+    AudioLoadDiag::SetPhaseCluster( "level_load", "queued_clusters" );
+#endif
     IRadNameSpace* charNamespace;
     unsigned int levelNum;
 
@@ -581,6 +588,10 @@ bool SoundLoader::clusterLoad( SoundClusterName name, SoundFileHandler* callback
     bool loaded;
 
     rAssert( name < SC_MAX_CLUSTERS );
+
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_AUDIO_DIAGNOSTICS )
+    AudioLoadDiag::SetPhaseCluster( "cluster_load", s_clusterNames[name] );
+#endif
     
     loaded = m_clusterList[name]->IsLoaded();
     if( !loaded )
@@ -599,3 +610,15 @@ void SoundLoader::clusterUnload( SoundClusterName name )
         m_clusterList[name]->UnloadSounds();
     }
 }
+
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_AUDIO_DIAGNOSTICS )
+const char* SoundLoader_GetClusterScriptNameForDiagnostics( SoundClusterName name )
+{
+    unsigned int i = static_cast<unsigned int>( name );
+    if ( i >= static_cast<unsigned int>( NumScriptNames ) )
+    {
+        return "?";
+    }
+    return s_clusterNames[ i ];
+}
+#endif

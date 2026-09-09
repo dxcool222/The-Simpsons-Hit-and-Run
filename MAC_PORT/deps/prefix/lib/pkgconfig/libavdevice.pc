@@ -1,0 +1,14 @@
+prefix=/Volumes/Untitled2/MAC/srr2mac_build/prefix
+exec_prefix=${prefix}
+libdir=/Volumes/Untitled2/MAC/srr2mac_build/prefix/lib
+includedir=/Volumes/Untitled2/MAC/srr2mac_build/prefix/include
+
+Name: libavdevice
+Description: FFmpeg device handling library
+Version: 60.3.100
+Requires: 
+Requires.private: libavfilter >= 9.12.100, libswscale >= 7.5.100, libpostproc >= 57.3.100, libavformat >= 60.16.100, libavcodec >= 60.31.102, libswresample >= 4.12.100, libavutil >= 58.29.100
+Conflicts:
+Libs: -L${libdir}  -lavdevice 
+Libs.private: -framework Foundation -framework AudioToolbox -framework CoreAudio -lm -framework AVFoundation -framework CoreVideo -framework CoreMedia -framework CoreGraphics -framework AudioToolbox -pthread -L/opt/homebrew/lib -lSDL2main -lSDL2 -Wl,-framework,Cocoa
+Cflags: -I${includedir}

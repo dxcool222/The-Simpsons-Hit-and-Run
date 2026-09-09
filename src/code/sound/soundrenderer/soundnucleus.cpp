@@ -4,6 +4,15 @@
 #include <radmusic/radmusic.hpp>
 #include <memory/srrmemory.h>
 
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_AUDIO_DIAGNOSTICS )
+#include <radtime.hpp>
+#include <sound/diagnostics/audioloaddiag.hpp>
+#include <sound/diagnostics/audioloaddiag_bridge.hpp>
+#include <diagnostics/tvosdiagnostics.h>
+#include <string.h>
+#include <cstdint>
+#endif
+
 namespace Sound
 {
 
@@ -107,7 +116,20 @@ struct ClipLoadInfo
 #ifdef RAD_TVOS
     IRadSoundHalDataSource * pDecodedDs;  // Holds decoded ADPCM stream if needed
 #endif
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_AUDIO_DIAGNOSTICS )
+    char diagClipPath[512];
+    radTime64 diagLoadStartUs;
+    radTime64 diagRsdReadyUs;
+    radTime64 diagFillingBufferEnterUs;
+    radTime64 diagLoadingClipEnterUs;
+    radTime64 diagClipDoneUs;
+#endif
 } gClipLoadInfo;
+
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_AUDIO_DIAGNOSTICS )
+static radTime64 s_clipDiagLastIdleUs = 0;
+static bool s_clipDiagHaveIdle = false;
+#endif
 
 StreamerResources gStreamers[ SOUND_NUM_STREAM_PLAYERS ] =
 {
@@ -444,6 +466,31 @@ void SoundNucleusUnCaptureStreamerResources( StreamerResources * pSi )
 void SoundNucleusLoadClip( const char * pFileName, bool looping )
 {
     rAssert( ClipLoadState_Idle == gClipLoadInfo.state );
+
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_AUDIO_DIAGNOSTICS )
+    radTime64 nowUs = radTimeGetMicroseconds64( );
+    unsigned long long gapUs = 0;
+    if ( s_clipDiagHaveIdle )
+    {
+        gapUs = static_cast<unsigned long long>( nowUs - s_clipDiagLastIdleUs );
+        SRR2_AudioDiag_RecordClipSerialGapUs( static_cast<uint64_t>( gapUs ) );
+    }
+    memset( gClipLoadInfo.diagClipPath, 0, sizeof( gClipLoadInfo.diagClipPath ) );
+    if ( pFileName != NULL )
+    {
+        strncpy( gClipLoadInfo.diagClipPath, pFileName, sizeof( gClipLoadInfo.diagClipPath ) - 1 );
+    }
+    gClipLoadInfo.diagLoadStartUs = nowUs;
+    gClipLoadInfo.diagRsdReadyUs = 0;
+    gClipLoadInfo.diagFillingBufferEnterUs = 0;
+    gClipLoadInfo.diagLoadingClipEnterUs = 0;
+    gClipLoadInfo.diagClipDoneUs = 0;
+    SRR2::Diagnostics::Tracef(
+        SRR2::Diagnostics::AUDIO_LOAD,
+        "[CLIP_PHASE_NUCLEUS] phase=InitFile_enter path='%s' serial_gap_since_idle_us=%llu",
+        gClipLoadInfo.diagClipPath,
+        gapUs );
+#endif
         
     gClipLoadInfo.pFds = radSoundRsdFileDataSourceCreate( GMA_AUDIO_PERSISTENT );
     gClipLoadInfo.pFds->AddRef( );     
@@ -470,6 +517,11 @@ void SoundNucleusLoadClip( const char * pFileName, bool looping )
 #endif
         
     gClipLoadInfo.state = ClipLoadState_InitFile;
+
+#ifdef RAD_TVOS
+    // Start the async file open in the same update that queued the clip.
+    SoundNucleusServiceClipLoad( );
+#endif
 }
 
 bool SoundNucleusIsClipLoaded( void )
@@ -477,6 +529,13 @@ bool SoundNucleusIsClipLoaded( void )
     rAssert( ClipLoadState_Idle != gClipLoadInfo.state );
  
     return ClipLoadState_Done == gClipLoadInfo.state;      
+}
+
+bool SoundNucleusIsClipLoadInProgress( void )
+{
+    return
+        ( gClipLoadInfo.state != ClipLoadState_Idle ) &&
+        ( gClipLoadInfo.state != ClipLoadState_Done );
 }
 
 void SoundNucleusFinishClipLoad( IRadSoundClip ** ppClip )
@@ -503,6 +562,28 @@ void SoundNucleusFinishClipLoad( IRadSoundClip ** ppClip )
     }
     
     gClipLoadInfo.state = ClipLoadState_Idle;
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_AUDIO_DIAGNOSTICS )
+    {
+        const radTime64 finUs = radTimeGetMicroseconds64( );
+        const unsigned long long sinceStart = static_cast<unsigned long long>(
+            finUs - gClipLoadInfo.diagLoadStartUs );
+        const unsigned long long sinceClipDone =
+            gClipLoadInfo.diagClipDoneUs != 0
+                ? static_cast<unsigned long long>( finUs - gClipLoadInfo.diagClipDoneUs )
+                : 0ULL;
+        const char* lit = AudioLoadDiag::LookupLiteralPathForKeyHex( gClipLoadInfo.diagClipPath );
+        SRR2::Diagnostics::Tracef(
+            SRR2::Diagnostics::AUDIO_LOAD,
+            "[CLIP_PHASE_NUCLEUS] phase=FinishClipLoad path='%s' literal_path=%s since_load_start_us=%llu "
+            "LoadingClip_done_to_FinishClipLoad_us=%llu",
+            gClipLoadInfo.diagClipPath,
+            lit != NULL ? lit : "(key-only)",
+            sinceStart,
+            sinceClipDone );
+    }
+    s_clipDiagLastIdleUs = radTimeGetMicroseconds64( );
+    s_clipDiagHaveIdle = true;
+#endif
 }
 
 void SoundNucleusCancelClipLoad( void )
@@ -535,6 +616,10 @@ void SoundNucleusCancelClipLoad( void )
     }
     
     gClipLoadInfo.state = ClipLoadState_Idle;
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_AUDIO_DIAGNOSTICS )
+    s_clipDiagLastIdleUs = radTimeGetMicroseconds64( );
+    s_clipDiagHaveIdle = true;
+#endif
       
 }
 
@@ -557,6 +642,20 @@ void SoundNucleusServiceClipLoad( void )
             {
                 if ( IRadSoundHalDataSource::Initialized == gClipLoadInfo.pFds->GetState( ) )
                 {
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_AUDIO_DIAGNOSTICS )
+                    if ( gClipLoadInfo.diagRsdReadyUs == 0 )
+                    {
+                        gClipLoadInfo.diagRsdReadyUs = radTimeGetMicroseconds64( );
+                        const unsigned long long pollUs = static_cast<unsigned long long>(
+                            gClipLoadInfo.diagRsdReadyUs - gClipLoadInfo.diagLoadStartUs );
+                        SRR2::Diagnostics::Tracef(
+                            SRR2::Diagnostics::AUDIO_LOAD,
+                            "[CLIP_PHASE_NUCLEUS] phase=WaitForFileOpen_ReadHeader_RsdReady path='%s' "
+                            "InitFile_poll_until_GetState_initialized_us=%llu",
+                            gClipLoadInfo.diagClipPath,
+                            pollUs );
+                    }
+#endif
 #ifdef RAD_TVOS
                     // tvOS: Check actual encoding from RSD header and wrap with decode stream if needed
                     IRadSoundHalDataSource* pDataSource = gClipLoadInfo.pFds;
@@ -582,6 +681,15 @@ void SoundNucleusServiceClipLoad( void )
                         gClipLoadInfo.pBds->SetInputDataSource( pDataSource );
                         
                         gClipLoadInfo.state = ClipLoadState_FillingBuffer;
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_AUDIO_DIAGNOSTICS )
+                        gClipLoadInfo.diagFillingBufferEnterUs = radTimeGetMicroseconds64( );
+                        SRR2::Diagnostics::Tracef(
+                            SRR2::Diagnostics::AUDIO_LOAD,
+                            "[CLIP_PHASE_NUCLEUS] phase=FillingBuffer_enter path='%s' since_load_start_us=%llu",
+                            gClipLoadInfo.diagClipPath,
+                            static_cast<unsigned long long>(
+                                gClipLoadInfo.diagFillingBufferEnterUs - gClipLoadInfo.diagLoadStartUs ) );
+#endif
                     }
                     else
                     {
@@ -594,6 +702,15 @@ void SoundNucleusServiceClipLoad( void )
                             "Clip" );
                             
                         gClipLoadInfo.state = ClipLoadState_LoadingClip;
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_AUDIO_DIAGNOSTICS )
+                        gClipLoadInfo.diagLoadingClipEnterUs = radTimeGetMicroseconds64( );
+                        SRR2::Diagnostics::Tracef(
+                            SRR2::Diagnostics::AUDIO_LOAD,
+                            "[CLIP_PHASE_NUCLEUS] phase=LoadingClip_enter path='%s' since_load_start_us=%llu",
+                            gClipLoadInfo.diagClipPath,
+                            static_cast<unsigned long long>(
+                                gClipLoadInfo.diagLoadingClipEnterUs - gClipLoadInfo.diagLoadStartUs ) );
+#endif
                     }
 #else
                     if ( gClipLoadInfo.pBds != NULL )
@@ -638,6 +755,15 @@ void SoundNucleusServiceClipLoad( void )
                         "Clip" );
                         
                     gClipLoadInfo.state = ClipLoadState_LoadingClip;
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_AUDIO_DIAGNOSTICS )
+                    gClipLoadInfo.diagLoadingClipEnterUs = radTimeGetMicroseconds64( );
+                    SRR2::Diagnostics::Tracef(
+                        SRR2::Diagnostics::AUDIO_LOAD,
+                        "[CLIP_PHASE_NUCLEUS] phase=LoadingClip_enter path='%s' since_load_start_us=%llu",
+                        gClipLoadInfo.diagClipPath,
+                        static_cast<unsigned long long>(
+                            gClipLoadInfo.diagLoadingClipEnterUs - gClipLoadInfo.diagLoadStartUs ) );
+#endif
                 }
                 
                 break;
@@ -646,6 +772,53 @@ void SoundNucleusServiceClipLoad( void )
             {
                 if ( IRadSoundClip::Initialized == gClipLoadInfo.pClip->GetState( ) )
                 {
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_AUDIO_DIAGNOSTICS )
+                    radTime64 endUs = radTimeGetMicroseconds64( );
+                    gClipLoadInfo.diagClipDoneUs = endUs;
+                    const unsigned long long wallUs = static_cast<unsigned long long>( endUs - gClipLoadInfo.diagLoadStartUs );
+                    SRR2_AudioDiag_RecordClipWallUs( static_cast<uint64_t>( wallUs ) );
+                    unsigned long long initPollUs = 0ULL;
+                    if ( gClipLoadInfo.diagRsdReadyUs != 0 )
+                    {
+                        initPollUs = static_cast<unsigned long long>(
+                            gClipLoadInfo.diagRsdReadyUs - gClipLoadInfo.diagLoadStartUs );
+                    }
+                    unsigned long long postRsdUs = 0ULL;
+                    if ( gClipLoadInfo.diagRsdReadyUs != 0 && gClipLoadInfo.diagLoadingClipEnterUs != 0 )
+                    {
+                        postRsdUs = static_cast<unsigned long long>(
+                            gClipLoadInfo.diagLoadingClipEnterUs - gClipLoadInfo.diagRsdReadyUs );
+                    }
+                    unsigned long long fillingUs = 0ULL;
+                    if ( gClipLoadInfo.diagFillingBufferEnterUs != 0 && gClipLoadInfo.diagLoadingClipEnterUs != 0 )
+                    {
+                        fillingUs = static_cast<unsigned long long>(
+                            gClipLoadInfo.diagLoadingClipEnterUs - gClipLoadInfo.diagFillingBufferEnterUs );
+                    }
+                    unsigned long long loadClipUs = 0ULL;
+                    if ( gClipLoadInfo.diagLoadingClipEnterUs != 0 )
+                    {
+                        loadClipUs = static_cast<unsigned long long>( endUs - gClipLoadInfo.diagLoadingClipEnterUs );
+                    }
+                    const char* lit = AudioLoadDiag::LookupLiteralPathForKeyHex( gClipLoadInfo.diagClipPath );
+                    SRR2::Diagnostics::Tracef(
+                        SRR2::Diagnostics::AUDIO_LOAD,
+                        "[CLIP_PHASE_NUCLEUS] phase=LoadingClip_done path='%s' literal_path=%s wall_us=%llu "
+                        "InitFile_poll_us=%llu post_rsd_us=%llu FillingBuffer_us=%llu LoadingClip_us=%llu "
+                        "(mono16/alBufferData see [AUDIO_TIMING] clip_mono16)",
+                        gClipLoadInfo.diagClipPath,
+                        lit != NULL ? lit : "(key-only)",
+                        wallUs,
+                        initPollUs,
+                        postRsdUs,
+                        fillingUs,
+                        loadClipUs );
+                    SRR2::Diagnostics::RecordAudioClipTiming(
+                        gClipLoadInfo.diagClipPath,
+                        static_cast<uint64_t>( wallUs ),
+                        static_cast<uint64_t>( initPollUs ),
+                        static_cast<uint64_t>( loadClipUs ) );
+#endif
                     gClipLoadInfo.state = ClipLoadState_Done;
                 }
                 

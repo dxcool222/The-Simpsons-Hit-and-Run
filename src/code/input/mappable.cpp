@@ -30,7 +30,7 @@ void Mappable::DispatchOnButton( int controllerId, int id, const Button* pButton
 {
     if(!mActive)
     {
-#if defined(RAD_TVOS)
+#if defined(RAD_TVOS) && defined(RAD_TVOS_INPUT_DIAGNOSTICS)
         // Only log button presses (value > 0.5) to reduce spam
         if( pButton != NULL && pButton->GetValue() > 0.5f )
         {

@@ -69,15 +69,3 @@ Create<daSoundResourceData>("stage_complete")
 Create<daSoundResourceData>("trampoline")
     .AddFilename ( "sound/soundfx/gameplay/trampoline_05.rsd", 1.000000f )
     .SetTrim ( 0.670000f );
-Create<daSoundResourceData>("car_stinger")
-    .AddFilename ( "sound/soundfx/optionsmenu/carstinger.rsd", 1.000000f )
-    .SetTrim ( 1.000000f );
-Create<daSoundResourceData>("dialog_stinger")
-    .AddFilename ( "sound/soundfx/optionsmenu/dialogstinger.rsd", 1.000000f )
-    .SetTrim ( 1.000000f );
-Create<daSoundResourceData>("sfx_stinger")
-    .AddFilename ( "sound/soundfx/optionsmenu/sfxstinger.rsd", 1.000000f )
-    .SetTrim ( 1.000000f );
-Create<daSoundResourceData>("music_stinger")
-    .AddFilename ( "sound/soundfx/optionsmenu/musicstinger.rsd", 1.000000f )
-    .SetTrim ( 1.000000f );

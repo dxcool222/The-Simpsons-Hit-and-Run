@@ -28,6 +28,7 @@
 #include <sound/soundrenderer/soundallocatedresource.h>
 #include <sound/soundrenderer/playermanager.h>
 #include <sound/soundrenderer/idasoundresource.h>
+#include <sound/soundrenderer/soundnucleus.hpp>
 #include <sound/soundrenderer/soundplayer.h>
 
 #include <memory/srrmemory.h>
@@ -51,7 +52,11 @@ SoundLoader* SimpsonsSoundPlayer::s_soundLoader = NULL;
 // Numbers are arbitrary and subject to experimentation
 //
 static const unsigned int s_maxActiveClipPlayersAllowed = 25;
+#ifdef RAD_TVOS
+static const unsigned int s_maxActiveStreamPlayersAllowed = Sound::SOUND_NUM_STREAM_PLAYERS;
+#else
 static const unsigned int s_maxActiveStreamPlayersAllowed = 8;
+#endif
 
 //******************************************************************************
 //
@@ -285,7 +290,18 @@ bool SimpsonsSoundPlayer::QueueSound( IDaSoundResource* resource,
     s_playerManager->CaptureFreePlayer( &m_playa, 
                                         resource,
                                         Type_Positional == m_Type );
-    rAssert( m_playa != NULL );
+    if( m_playa == NULL )
+    {
+        if( resource->GetType() == IDaSoundResource::CLIP )
+        {
+            --s_clipPlayersInUse;
+        }
+        else
+        {
+            --s_streamPlayersInUse;
+        }
+        return( false );
+    }
 
     if( m_snapPitchOnCapture )
     {

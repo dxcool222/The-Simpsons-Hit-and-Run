@@ -24,7 +24,7 @@
 
 #include "clipplayer.hpp"
 
-#ifdef RAD_TVOS
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_AUDIO_DIAGNOSTICS )
 #if __has_include(<SDL2/SDL.h>)
     #include <SDL2/SDL.h>
 #else
@@ -149,7 +149,7 @@ bool radSoundClipPlayer::IsPlaying( void )
 		m_State == IRadSoundClipPlayer::QueuedPlay
 	)
 	{
-#ifdef RAD_TVOS
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_AUDIO_DIAGNOSTICS )
 		s_clipPlayCount++;
 		
 		// Log first 30 clip plays + every 50th after
@@ -164,13 +164,13 @@ bool radSoundClipPlayer::IsPlaying( void )
 			}
 			
 			if (fmt) {
-				SDL_Log("[CLIP_PLAY] #%u Play: state=%s enc=%d rate=%u ch=%u bits=%u trim=%.2f",
+				TVOS_AUDIO_DIAG("[CLIP_PLAY] #%u Play: state=%s enc=%d rate=%u ch=%u bits=%u trim=%.2f",
 				        s_clipPlayCount, stateName, 
 				        fmt->GetEncoding(), fmt->GetSampleRate(), 
 				        fmt->GetNumberOfChannels(), fmt->GetBitResolution(),
 				        m_Trim);
 			} else {
-				SDL_Log("[CLIP_PLAY] #%u Play: state=%s (no format info) trim=%.2f",
+				TVOS_AUDIO_DIAG("[CLIP_PLAY] #%u Play: state=%s (no format info) trim=%.2f",
 				        s_clipPlayCount, stateName, m_Trim);
 			}
 		}
@@ -479,4 +479,3 @@ IRadSoundClipPlayer * radSoundClipPlayerCreate( radMemoryAllocator allocator )
 {
 	return new ( "radSoundClipPlayer", allocator ) radSoundClipPlayer( allocator );
 };
-

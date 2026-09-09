@@ -1,0 +1,14 @@
+prefix=/Volumes/Untitled2/MAC/srr2mac_build/prefix
+exec_prefix=${prefix}
+libdir=/Volumes/Untitled2/MAC/srr2mac_build/prefix/lib
+includedir=/Volumes/Untitled2/MAC/srr2mac_build/prefix/include
+
+Name: libpostproc
+Description: FFmpeg postprocessing library
+Version: 57.3.100
+Requires: 
+Requires.private: libavutil >= 58.29.100
+Conflicts:
+Libs: -L${libdir}  -lpostproc 
+Libs.private: -lm
+Cflags: -I${includedir}

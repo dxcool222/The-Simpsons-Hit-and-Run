@@ -585,6 +585,11 @@ unsigned int  daSoundDynaLoadRegion::GetNumPendingSwaps( void )
     return( s_GlobalPendingSwapCount );
 }
 
+bool daSoundDynaLoadRegion::IsSwapActive( void )
+{
+    return( s_pActiveRegion != NULL );
+}
+
 //=============================================================================
 // Function:    daSoundDynaLoadRegion::GetPendingSwapObject
 //=============================================================================
@@ -774,20 +779,35 @@ void daSoundDynaLoadManager::ServiceOncePerFrame( void )
 {
     IDaSoundDynaLoadCompletionCallback* callback;
 
+#ifdef RAD_TVOS
+    const unsigned int servicePasses = 2;
+#else
+    const unsigned int servicePasses = 1;
+#endif
+
     // Service each of the regions
-    daSoundDynaLoadRegion* pDynaLoadRegion =
-        daSoundDynaLoadRegion::GetLinkedClassHead( );
-    while( pDynaLoadRegion != NULL )
+    for( unsigned int pass = 0; pass < servicePasses; ++pass )
     {
-        pDynaLoadRegion->ServiceOncePerFrame( );
-        pDynaLoadRegion = pDynaLoadRegion->GetLinkedClassNext( );
+        daSoundDynaLoadRegion* pDynaLoadRegion =
+            daSoundDynaLoadRegion::GetLinkedClassHead( );
+        while( pDynaLoadRegion != NULL )
+        {
+            pDynaLoadRegion->ServiceOncePerFrame( );
+            pDynaLoadRegion = pDynaLoadRegion->GetLinkedClassNext( );
+        }
+
+        if( daSoundDynaLoadRegion::GetNumPendingSwaps( ) == 0 )
+        {
+            break;
+        }
     }
 
     // Call any completion callbacks
     if
     (
         ( m_pCompletionCallback != NULL ) &&
-        ( daSoundDynaLoadRegion::GetNumPendingSwaps( ) == 0 )
+        ( daSoundDynaLoadRegion::GetNumPendingSwaps( ) == 0 ) &&
+        ( !daSoundDynaLoadRegion::IsSwapActive( ) )
     )
     {
         //

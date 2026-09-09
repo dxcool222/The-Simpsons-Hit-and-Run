@@ -62,6 +62,11 @@ public:
     void SetGamma(float r, float g, float b);
     void GetGamma(float* r, float* g, float* b);
 
+#if defined(RAD_MACOS)
+    // Async radLoad runs on a worker thread; macOS GL requires a current context
+    // on that thread (shared with the render context) for texture uploads.
+    static void EnsureLoadThreadContext(void);
+#endif
 
 private:
     pddiDisplayMode mode;
@@ -80,6 +85,9 @@ private:
     SDL_Window* win;
     void* hRC;
     void* prevRC;
+#if defined(RAD_MACOS)
+    void* hRCLoad;
+#endif
 
     bool extBGRA;
     bool reset;

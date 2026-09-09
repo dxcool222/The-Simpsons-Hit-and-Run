@@ -10,13 +10,9 @@
 #include "voice.hpp"
 #include "listener.hpp"
 #include "system.hpp"
+#include <diagnostics/tvosdiagnostics.h>
 
-#ifdef RAD_TVOS
-#if __has_include(<SDL2/SDL.h>)
-    #include <SDL2/SDL.h>
-#else
-    #include <SDL.h>
-#endif
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_AUDIO_DIAGNOSTICS )
 static unsigned int s_voicePlayCount = 0;
 #endif
 
@@ -42,6 +38,9 @@ radSoundHalVoiceWin::radSoundHalVoiceWin( void )
 {
     alGenSources( 1, &m_Source );
     alSourcei( m_Source, AL_SOURCE_RELATIVE, AL_TRUE );
+#ifdef RAD_TVOS
+    SRR2::Diagnostics::Tracef( SRR2::Diagnostics::AUDIO_SOURCE_LIFETIME, "source_create sourceId=%u", m_Source );
+#endif
 }
 
 //========================================================================
@@ -67,6 +66,9 @@ radSoundHalVoiceWin::~radSoundHalVoiceWin
 
     if (m_Source)
     {
+#ifdef RAD_TVOS
+        SRR2::Diagnostics::RecordAudioSourceStop( m_Source, "destroy" );
+#endif
         alDeleteSources(1, &m_Source);
     }
 }
@@ -87,10 +89,38 @@ unsigned int radSoundHalVoiceWin::GetPriority( void )
 
 void radSoundHalVoiceWin::SetBuffer( IRadSoundHalBuffer * pIRadSoundHalBuffer )
 {
+#ifdef RAD_TVOS
+    ALint oldBufferId = 0;
+    ALint oldLooping = 0;
+    ALint oldState = 0;
+    alGetSourcei( m_Source, AL_BUFFER, &oldBufferId );
+    alGetSourcei( m_Source, AL_LOOPING, &oldLooping );
+    alGetSourcei( m_Source, AL_SOURCE_STATE, &oldState );
+    alGetError();
+#endif
+
     Stop( );
 
 #ifdef RAD_TVOS
     ref< radSoundHalBufferWin > xOldBuffer = m_xRadSoundHalBufferWin;
+    const bool oldQueued = xOldBuffer != NULL && xOldBuffer->UsesBufferQueuing();
+    if ( xOldBuffer != NULL && xOldBuffer->UsesBufferQueuing() )
+    {
+        xOldBuffer->SetQueuePlaybackRequested( false );
+        xOldBuffer->FlushBufferQueue();
+        xOldBuffer->SetAttachedSource( 0 );
+    }
+    alSourceStop( m_Source );
+    alSourcei( m_Source, AL_LOOPING, AL_FALSE );
+    alSourcei( m_Source, AL_BUFFER, 0 );
+    ALenum resetErr = alGetError();
+    SRR2::Diagnostics::RecordAudioSourceReset(
+        m_Source,
+        (uint32_t)oldBufferId,
+        oldState == AL_PLAYING,
+        oldLooping == AL_TRUE,
+        oldQueued );
+    SRR2::Diagnostics::RecordOpenALError( "SetBuffer.reset", m_Source, (uint32_t)resetErr );
 #endif
 
     m_xRadSoundHalBufferWin = NULL;
@@ -111,11 +141,12 @@ void radSoundHalVoiceWin::SetBuffer( IRadSoundHalBuffer * pIRadSoundHalBuffer )
         // Buffers will be queued dynamically via alSourceQueueBuffers
         // For non-queuing buffers: attach normally
         bool isStreaming = m_xRadSoundHalBufferWin->IsStreaming();
-        unsigned int channels = m_xRadSoundHalBufferWin->GetFormat()->GetNumberOfChannels();
         bool useQueuing = isStreaming && m_xRadSoundHalBufferWin->UsesBufferQueuing();  // Mono streaming uses queuing
+        m_xRadSoundHalBufferWin->SetQueuePlaybackRequested( false );
         
         if (!useQueuing) {
             alSourcei( m_Source, AL_BUFFER, m_xRadSoundHalBufferWin->GetBuffer() );
+            alSourcei( m_Source, AL_SAMPLE_OFFSET, 0 );
         } else {
             // CRITICAL: Hard reset for new stream identity
             // This prevents "old dude voice everywhere" bug
@@ -126,7 +157,7 @@ void radSoundHalVoiceWin::SetBuffer( IRadSoundHalBuffer * pIRadSoundHalBuffer )
             alSourcei( m_Source, AL_LOOPING, AL_FALSE );
             alGetError();  // Clear any error
             
-            SDL_Log("[VOICE_QUEUE] Source %u: hard reset + AL_LOOPING=FALSE for mono stream", m_Source);
+            TVOS_AUDIO_DIAG("[VOICE_QUEUE] Source %u: hard reset + AL_LOOPING=FALSE for mono stream", m_Source);
         }
 #else
         alSourcei( m_Source, AL_BUFFER, m_xRadSoundHalBufferWin->GetBuffer() );
@@ -155,6 +186,16 @@ void radSoundHalVoiceWin::SetBuffer( IRadSoundHalBuffer * pIRadSoundHalBuffer )
         } else {
             alSourcei( m_Source, AL_LOOPING, m_xRadSoundHalBufferWin->IsLooping() );
         }
+        {
+            ALint attachedLooping = 0;
+            alGetSourcei( m_Source, AL_LOOPING, &attachedLooping );
+            SRR2::Diagnostics::RecordAudioSourceAttach(
+                m_Source,
+                (uint32_t)m_xRadSoundHalBufferWin->GetBuffer(),
+                attachedLooping == AL_TRUE,
+                isStreaming,
+                useQueuing );
+        }
 #else
         alSourcei( m_Source, AL_LOOPING, m_xRadSoundHalBufferWin->IsLooping() );
 #endif
@@ -166,12 +207,16 @@ void radSoundHalVoiceWin::SetBuffer( IRadSoundHalBuffer * pIRadSoundHalBuffer )
         if ( xOldBuffer != NULL )
         {
             // Flush any queued buffers first
+            xOldBuffer->SetQueuePlaybackRequested( false );
             xOldBuffer->FlushBufferQueue();
             xOldBuffer->SetAttachedSource( 0 );
         }
 #endif
         alSourcei( m_Source, AL_BUFFER, 0 );
         alSourcei( m_Source, AL_LOOPING, AL_FALSE );
+#ifdef RAD_TVOS
+        SRR2::Diagnostics::RecordAudioSourceAttach( m_Source, 0, false, false, false );
+#endif
     }
 
     if( m_xRadSoundHalPositionalGroup != NULL )
@@ -190,43 +235,78 @@ void radSoundHalVoiceWin::Play( )
     if (IsHardwarePlaying( ) == false)
     {
 #ifdef RAD_TVOS
-        s_voicePlayCount++;
-        
-        // Log first 30 voice plays + every 50th after
-        if (s_voicePlayCount <= 30 || (s_voicePlayCount % 50) == 0) {
-            ALint bufferID = 0;
-            alGetSourcei(m_Source, AL_BUFFER, &bufferID);
-            
-            // Get buffer info if available
-            ALint bufferSize = 0, bufferFreq = 0, bufferBits = 0, bufferChannels = 0;
-            if (bufferID != 0) {
-                alGetBufferi(bufferID, AL_SIZE, &bufferSize);
-                alGetBufferi(bufferID, AL_FREQUENCY, &bufferFreq);
-                alGetBufferi(bufferID, AL_BITS, &bufferBits);
-                alGetBufferi(bufferID, AL_CHANNELS, &bufferChannels);
-            }
-            
-            SDL_Log("[VOICE_PLAY] #%u source=%u buffer=%d size=%d freq=%d bits=%d ch=%d vol=%.2f trim=%.2f",
-                    s_voicePlayCount, m_Source, bufferID, bufferSize, bufferFreq, bufferBits, bufferChannels,
-                    m_Volume, m_Trim);
-            
-            // ALWAYS log mono streaming voices to diagnose garbled audio
-            if (bufferChannels == 1 && m_xRadSoundHalBufferWin != NULL && m_xRadSoundHalBufferWin->IsStreaming()) {
-                ALfloat pitch = 1.0f;
-                alGetSourcef(m_Source, AL_PITCH, &pitch);
-                SDL_Log("[MONO_VOICE] source=%u buffer=%d streaming=YES pitch=%.3f size=%d freq=%d",
-                        m_Source, bufferID, pitch, bufferSize, bufferFreq);
-            }
+        const bool useQueue = ( m_xRadSoundHalBufferWin != NULL &&
+                                m_xRadSoundHalBufferWin->UsesBufferQueuing() );
+        if ( useQueue )
+        {
+            m_xRadSoundHalBufferWin->SetQueuePlaybackRequested( true );
         }
+#endif
+
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_AUDIO_DIAGNOSTICS )
+        s_voicePlayCount++;
+        ALint bufferID = 0;
+        ALint looping = 0;
+        alGetSourcei(m_Source, AL_BUFFER, &bufferID);
+        alGetSourcei(m_Source, AL_LOOPING, &looping);
+
+        ALint bufferSize = 0, bufferFreq = 0, bufferBits = 0, bufferChannels = 0;
+        if (bufferID != 0) {
+            alGetBufferi(bufferID, AL_SIZE, &bufferSize);
+            alGetBufferi(bufferID, AL_FREQUENCY, &bufferFreq);
+            alGetBufferi(bufferID, AL_BITS, &bufferBits);
+            alGetBufferi(bufferID, AL_CHANNELS, &bufferChannels);
+        } else if ( m_xRadSoundHalBufferWin != NULL && m_xRadSoundHalBufferWin->GetFormat() != NULL ) {
+            bufferID = (ALint)m_xRadSoundHalBufferWin->GetBuffer();
+            bufferSize = (ALint)m_xRadSoundHalBufferWin->GetSizeInBytes();
+            bufferFreq = (ALint)m_xRadSoundHalBufferWin->GetFormat()->GetSampleRate();
+            bufferBits = (ALint)m_xRadSoundHalBufferWin->GetFormat()->GetBitResolution();
+            bufferChannels = (ALint)m_xRadSoundHalBufferWin->GetFormat()->GetNumberOfChannels();
+        }
+        // Probe calls above can leave a sticky AL error; clear before Play.
+        alGetError();
+
+        uint32_t expectedMs = 0;
+        if ( bufferSize > 0 && bufferFreq > 0 && bufferBits > 0 && bufferChannels > 0 )
+        {
+            expectedMs = (uint32_t)( ( (uint64_t)bufferSize * 8000ULL ) /
+                         ( (uint64_t)bufferFreq * (uint64_t)bufferBits * (uint64_t)bufferChannels ) );
+        }
+        SRR2::Diagnostics::RecordAudioSourcePlay(
+            m_Source,
+            (uint32_t)bufferID,
+            looping == AL_TRUE,
+            m_xRadSoundHalBufferWin != NULL && m_xRadSoundHalBufferWin->IsStreaming(),
+            expectedMs );
+        SRR2::Diagnostics::Tracef(
+            SRR2::Diagnostics::AUDIO_PLAYBACK,
+            "voice_play sourceId=%u buffer=%d size=%d freq=%d bits=%d ch=%d vol=%.2f trim=%.2f",
+            m_Source,
+            bufferID,
+            bufferSize,
+            bufferFreq,
+            bufferBits,
+            bufferChannels,
+            m_Volume,
+            m_Trim );
+#endif
+#ifdef RAD_TVOS
+        // Streaming queue sources: don't Play until at least one buffer is queued.
+        // Premature Play on Soft/macOS leaves the source in a bad state (INVALID_VALUE
+        // on later Stop/Play) and matches the accumulating OPENAL_ERROR evidence.
+        if ( useQueue && m_xRadSoundHalBufferWin->GetQueuedBufferCount() == 0 )
+        {
+            return;
+        }
+        alGetError();
 #endif
         alSourcePlay(m_Source);
 #ifdef RAD_TVOS
         ALenum err = alGetError();
-        if (err != AL_NO_ERROR) {
-            SDL_Log("[VOICE_PLAY] ERROR: alSourcePlay failed! source=%u err=0x%x", m_Source, err);
-        }
+        SRR2::Diagnostics::RecordOpenALError( "alSourcePlay", m_Source, (uint32_t)err );
         
         // Verify source is actually playing after alSourcePlay
+#if defined( RAD_TVOS_AUDIO_DIAGNOSTICS )
         if (s_voicePlayCount <= 30 || (s_voicePlayCount % 50) == 0) {
             ALint sourceState = 0;
             alGetSourcei(m_Source, AL_SOURCE_STATE, &sourceState);
@@ -242,9 +322,15 @@ void radSoundHalVoiceWin::Play( )
                 case AL_STOPPED: stateStr = "STOPPED"; break;
             }
             
-            SDL_Log("[VOICE_PLAY] #%u POST-Play: source=%u state=%s gain=%.3f",
-                    s_voicePlayCount, m_Source, stateStr, sourceGain);
+            SRR2::Diagnostics::Tracef(
+                SRR2::Diagnostics::AUDIO_PLAYBACK,
+                "voice_post_play count=%u sourceId=%u state=%s gain=%.3f",
+                s_voicePlayCount,
+                m_Source,
+                stateStr,
+                sourceGain );
         }
+#endif
 #else
         rWarningMsg(alGetError() == AL_NO_ERROR, "radSoundHalVoiceWin::Play failed");
 #endif
@@ -253,6 +339,12 @@ void radSoundHalVoiceWin::Play( )
 
 void radSoundHalVoiceWin::Stop( void )
 {
+#ifdef RAD_TVOS
+    if ( m_xRadSoundHalBufferWin != NULL && m_xRadSoundHalBufferWin->UsesBufferQueuing() ) {
+        m_xRadSoundHalBufferWin->SetQueuePlaybackRequested( false );
+    }
+#endif
+
     if (IsHardwarePlaying( ) == true)
     {
 #ifdef RAD_DEBUG
@@ -267,9 +359,16 @@ void radSoundHalVoiceWin::Stop( void )
         }
 #endif // RAD_DEBUG
 
+        alGetError(); // drop sticky errors from prior positional/probe calls
         alSourceStop(m_Source);
 
+#ifdef RAD_TVOS
+        ALenum stopErr = alGetError();
+        SRR2::Diagnostics::RecordAudioSourceStop( m_Source, "stop" );
+        SRR2::Diagnostics::RecordOpenALError( "alSourceStop", m_Source, (uint32_t)stopErr );
+#else
         rWarningMsg(alGetError() == AL_NO_ERROR, "radSoundHalVoiceWin::Stop failed");
+#endif
     }
 }
 
@@ -280,6 +379,12 @@ bool radSoundHalVoiceWin::IsPlaying( void )
 
 unsigned int radSoundHalVoiceWin::GetPlaybackPositionInSamples( void )
 {
+#ifdef RAD_TVOS
+    if ( m_xRadSoundHalBufferWin != NULL && m_xRadSoundHalBufferWin->UsesBufferQueuing() ) {
+        return m_xRadSoundHalBufferWin->GetQueuedPlaybackPositionInSamples();
+    }
+#endif
+
     ALint currentPosition = 0;
     alGetSourcei( m_Source, AL_SAMPLE_OFFSET, &currentPosition );
     rWarningMsg(alGetError() == AL_NO_ERROR, "radSoundHalVoiceWin::GetPlaybackPositionInSamples failed");
@@ -438,7 +543,9 @@ void radSoundHalVoiceWin::SetPitchInternal( void )
 {
     ::radSoundVerifyAnalogPitch(m_Pitch);
 
-    alSourcef(m_Source, AL_PITCH, m_Pitch);
+    // OpenAL rejects pitch <= 0 with AL_INVALID_VALUE; clamp for Soft/macOS.
+    const float pitch = ( m_Pitch > 0.001f ) ? m_Pitch : 0.001f;
+    alSourcef(m_Source, AL_PITCH, pitch);
 
     rWarningMsg(alGetError() == AL_NO_ERROR, "radSoundHalVoiceWin::SetPitchInternal failed!");
 }
@@ -526,15 +633,50 @@ void radSoundHalVoiceWin::SetPitchInternal( void )
     radSoundHalPositionalGroup* p = m_xRadSoundHalPositionalGroup;
     rAssert( p );
 
-    alSource3f(m_Source, AL_POSITION, p->m_Position.m_x, p->m_Position.m_y, -p->m_Position.m_z);
-    alSource3f(m_Source, AL_VELOCITY, p->m_Velocity.m_x, p->m_Velocity.m_y, -p->m_Velocity.m_z);
-    alSource3f(m_Source, AL_DIRECTION, p->m_Direction.m_x, p->m_Direction.m_y, -p->m_Direction.m_z);
-    alSourcef(m_Source, AL_CONE_INNER_ANGLE, p->m_ConeOuterAngle);
-    alSourcef(m_Source, AL_CONE_OUTER_ANGLE, p->m_ConeInnerAngle);
-    alSourcef(m_Source, AL_CONE_OUTER_GAIN, p->m_ConeOuterGain);
-    alSourcef(m_Source, AL_REFERENCE_DISTANCE, p->m_ReferenceDistance);
-    alSourcef(m_Source, AL_MAX_DISTANCE, p->m_MaxDistance);
-    alSourcef(m_Source, AL_ROLLOFF_FACTOR, listenerRolloffFactor);
+    auto finiteOr = []( float v, float fallback ) -> float
+    {
+        return ( v == v && v != 1e30f && v != -1e30f ) ? v : fallback;
+    };
+
+    const float px = finiteOr( p->m_Position.m_x, 0.0f );
+    const float py = finiteOr( p->m_Position.m_y, 0.0f );
+    const float pz = finiteOr( p->m_Position.m_z, 0.0f );
+    const float vx = finiteOr( p->m_Velocity.m_x, 0.0f );
+    const float vy = finiteOr( p->m_Velocity.m_y, 0.0f );
+    const float vz = finiteOr( p->m_Velocity.m_z, 0.0f );
+    const float dx = finiteOr( p->m_Direction.m_x, 0.0f );
+    const float dy = finiteOr( p->m_Direction.m_y, 0.0f );
+    const float dz = finiteOr( p->m_Direction.m_z, -1.0f );
+
+    float coneInner = finiteOr( p->m_ConeOuterAngle, 360.0f );
+    float coneOuter = finiteOr( p->m_ConeInnerAngle, 360.0f );
+    if ( coneInner < 0.0f ) coneInner = 0.0f;
+    if ( coneInner > 360.0f ) coneInner = 360.0f;
+    if ( coneOuter < 0.0f ) coneOuter = 0.0f;
+    if ( coneOuter > 360.0f ) coneOuter = 360.0f;
+
+    float coneGain = finiteOr( p->m_ConeOuterGain, 0.0f );
+    if ( coneGain < 0.0f ) coneGain = 0.0f;
+    if ( coneGain > 1.0f ) coneGain = 1.0f;
+
+    float refDist = finiteOr( p->m_ReferenceDistance, 1.0f );
+    float maxDist = finiteOr( p->m_MaxDistance, 1000.0f );
+    if ( refDist < 0.001f ) refDist = 0.001f;
+    if ( maxDist < refDist ) maxDist = refDist;
+
+    float rolloff = finiteOr( listenerRolloffFactor, 1.0f );
+    if ( rolloff < 0.0f ) rolloff = 0.0f;
+
+    alGetError();
+    alSource3f(m_Source, AL_POSITION, px, py, -pz);
+    alSource3f(m_Source, AL_VELOCITY, vx, vy, -vz);
+    alSource3f(m_Source, AL_DIRECTION, dx, dy, -dz);
+    alSourcef(m_Source, AL_CONE_INNER_ANGLE, coneInner);
+    alSourcef(m_Source, AL_CONE_OUTER_ANGLE, coneOuter);
+    alSourcef(m_Source, AL_CONE_OUTER_GAIN, coneGain);
+    alSourcef(m_Source, AL_REFERENCE_DISTANCE, refDist);
+    alSourcef(m_Source, AL_MAX_DISTANCE, maxDist);
+    alSourcef(m_Source, AL_ROLLOFF_FACTOR, rolloff);
     alSourcei(m_Source, AL_SOURCE_RELATIVE, AL_FALSE);
 
     rWarningMsg(alGetError() == AL_NO_ERROR, "radSoundHalVoiceWin::OnApplyPositionalInfo Failed.\n");
@@ -549,7 +691,3 @@ IRadSoundHalVoice * radSoundHalVoiceCreate( radMemoryAllocator allocator )
 {
     return new ( "radSoundHalVoiceWin", allocator ) radSoundHalVoiceWin( );
 }
-
-
-
-

@@ -85,6 +85,7 @@ public :
     // internal pddiglfunctions
     pglDisplay* GetDisplay(void) {return display;}
     void SetShaderProgram(pglProgram* program);
+    void InvalidateShaderProgram();
     void SetTextureEnvironment(const pglTextureEnv* texEnv);
 
     unsigned contextID;
@@ -186,6 +187,8 @@ protected:
 
     unsigned short* indices;
     unsigned indexCount;
+    bool indexRangeValidated;
+    bool indexRangeValid;
 
     bool valid;
     GLuint vertexBuffer;
@@ -196,4 +199,3 @@ protected:
 };
     
 #endif
-

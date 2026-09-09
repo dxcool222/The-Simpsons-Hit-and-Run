@@ -16,7 +16,7 @@
 
 #include <string.h>
 
-#ifdef RAD_TVOS
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_RENDER_DIAGNOSTICS )
 #if __has_include(<SDL2/SDL.h>)
     #include <SDL2/SDL.h>
 #else
@@ -67,7 +67,7 @@ tGeometry::~tGeometry()
 //------------------------------------------------------------------------
 tShader* tGeometry::GetShader(int i)
 { 
-    if( primGroup[i])
+    if( i >= 0 && (unsigned)i < primGroup.Size() && primGroup[i])
         return primGroup[i]->GetShader(); 
 
     return NULL;
@@ -75,7 +75,7 @@ tShader* tGeometry::GetShader(int i)
 
 void tGeometry::SetShader(int i, tShader* shader) 
 { 
-    if( primGroup[i] )
+    if( i >= 0 && (unsigned)i < primGroup.Size() && primGroup[i] )
         primGroup[i]->SetShader(shader); 
 }
 
@@ -83,6 +83,10 @@ void tGeometry::ProcessShaders(ShaderCallback& callback)
 {
     for( unsigned i = 0; i < primGroup.Size(); i++)
     {
+        if( primGroup[i] == NULL )
+        {
+            continue;
+        }
         tShader* shader = primGroup[i]->GetShader();
         tShader* newShader = callback.Process(shader);
         if(newShader != shader)
@@ -94,13 +98,16 @@ void tGeometry::ProcessShaders(ShaderCallback& callback)
 
 void tGeometry::SetPrimGroup(int i, tPrimGroup* group)
 {
-    tRefCounted::Assign(primGroup[i], group);
+    if( i >= 0 && (unsigned)i < primGroup.Size() )
+    {
+        tRefCounted::Assign(primGroup[i], group);
+    }
 }
 
 //------------------------------------------------------------------------
 void tGeometry::Display()
 {
-#ifdef RAD_TVOS
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_RENDER_DIAGNOSTICS )
     s_geoDisplayCount++;
     unsigned int pgSize = primGroup.Size();
     if(pgSize == 0)
@@ -260,4 +267,3 @@ tEntity* tGeometryLoader::LoadObject(tChunkFile* f, tEntityStore* store)
 
     return geo;
 }
-

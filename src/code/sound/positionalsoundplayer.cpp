@@ -19,6 +19,7 @@
 //========================================
 #include <sound/positionalsoundplayer.h>
 
+#include <diagnostics/tvosdiagnostics.h>
 #include <sound/soundfx/positionalsoundsettings.h>
 
 #include <memory/srrmemory.h>
@@ -98,7 +99,7 @@ PositionalSoundPlayer::PositionalSoundPlayer( ) :
 //=============================================================================
 PositionalSoundPlayer::~PositionalSoundPlayer()
 {
-    delete m_positionCarrier;
+    m_positionCarrier = NULL;
 
     if( m_positionalSettings != NULL )
     {
@@ -214,6 +215,22 @@ void PositionalSoundPlayer::ServiceOncePerFrame()
 void PositionalSoundPlayer::SetPositionCarrier( PositionCarrier& movingSound )
 {
     m_positionCarrier = &movingSound;
+    SRR2::Diagnostics::Tracef(
+        SRR2::Diagnostics::AUDIO_POSITIONAL,
+        "position_carrier_set player=%p carrier=%p",
+        this,
+        &movingSound );
+}
+
+void PositionalSoundPlayer::UnsetPositionCarrier()
+{
+    SRR2::Diagnostics::Tracef(
+        SRR2::Diagnostics::AUDIO_POSITIONAL,
+        "position_carrier_unset player=%p carrier=%p inUse=%d",
+        this,
+        m_positionCarrier,
+        IsInUse() ? 1 : 0 );
+    m_positionCarrier = NULL;
 }
 
 //=============================================================================
@@ -276,6 +293,11 @@ void PositionalSoundPlayer::dumpSoundPlayer()
     }
 
     m_positionCarrier = NULL;
+    m_outOfRange = false;
+    SRR2::Diagnostics::Tracef(
+        SRR2::Diagnostics::AUDIO_POSITIONAL,
+        "position_player_dump player=%p",
+        this );
 
     //
     // Let the parent clean up now

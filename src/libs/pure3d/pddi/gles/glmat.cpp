@@ -4,6 +4,7 @@
 
 #include <pddi/gles/gl.hpp>
 #include <pddi/gles/glmat.hpp>
+#include <diagnostics/tvosdiagnostics.h>
 #include <pddi/gles/gltex.hpp>
 #include <pddi/gles/glcon.hpp>
 #include <pddi/gles/glprog.hpp>
@@ -329,7 +330,7 @@ void pglMat::SetDevPass(unsigned pass)
 {
     MICROPROFILE_SCOPEI( "PDDI", "pglMat::SetDevPass", MP_RED );
 
-#ifdef RAD_TVOS
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_RENDER_DIAGNOSTICS )
     // One-time diagnostic for video shader binding
     static unsigned int s_setDevPassCount = 0;
     static bool s_shaderDiagDone = false;
@@ -371,7 +372,9 @@ void pglMat::SetDevPass(unsigned pass)
     if(!s_diagLogDone)
     {
         s_diagLogDone = true;
-        SDL_Log("[DIAG] DIAG_FORCE_SOLID_COLOR enabled - all geometry renders as magenta");
+        SRR2::Diagnostics::Anomalyf(
+            SRR2::Diagnostics::RENDER,
+            "[RENDER_FORCE_SOLID_COLOR] enabled=1 color=magenta" );
     }
 #else
     {
@@ -391,15 +394,19 @@ void pglMat::SetDevPass(unsigned pass)
             glActiveTexture(GL_TEXTURE0);
         }
 
-#ifdef RAD_TVOS
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_RENDER_DIAGNOSTICS )
         // Log shader binding diagnostic ONCE when texture is set
         if ( !s_shaderDiagDone && s_setDevPassCount > 50 ) {
             s_shaderDiagDone = true;
             GLint currentProg = 0, boundTex = 0;
             glGetIntegerv( GL_CURRENT_PROGRAM, &currentProg );
             glGetIntegerv( GL_TEXTURE_BINDING_2D, &boundTex );
-            SDL_Log( "[SHADER_DIAG] SetDevPass: texture=%p glProgram=%d boundTex=%d",
-                     (void*)texEnv[i].texture, currentProg, boundTex );
+            SRR2::Diagnostics::Tracef(
+                SRR2::Diagnostics::RENDER,
+                "[SHADER_STATE_TRACE] texture=%p glProgram=%d boundTex=%d",
+                (void*)texEnv[i].texture,
+                currentProg,
+                boundTex );
         }
 #endif
 
@@ -430,7 +437,7 @@ void pglMat::SetDevPass(unsigned pass)
         glEnable(GL_CULL_FACE);
     }
 
-#ifdef RAD_TVOS
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_RENDER_DIAGNOSTICS )
     // DIAGNOSTIC: Log material state for first 50 draws + every 1000th
     static int s_matStateDiagCount = 0;
     s_matStateDiagCount++;
@@ -455,7 +462,8 @@ void pglMat::SetDevPass(unsigned pass)
             texH = texEnv[i].texture->GetHeight();
         }
         
-        SDL_Log("[MAT_STATE] #%d tex=%p(%dx%d) blendMode=%d diffuseA=%d zWrite=%d zTest=%d blend=%d zFunc=0x%x",
+        SRR2::Diagnostics::Tracef(SRR2::Diagnostics::RENDER,
+            "[MAT_STATE] #%d tex=%p(%dx%d) blendMode=%d diffuseA=%d zWrite=%d zTest=%d blend=%d zFunc=0x%x",
             s_matStateDiagCount,
             (void*)texEnv[i].texture,
             texW, texH,

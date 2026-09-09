@@ -54,6 +54,29 @@
 #include <render/RenderFlow/renderflow.h>
 #include <sound/soundmanager.h>
 #include <input/inputmanager.h>
+#include <diagnostics/tvosdiagnostics.h>
+
+#ifdef RAD_TVOS
+static const char* TvosDiagContextName( ContextEnum context )
+{
+    switch( context )
+    {
+        case CONTEXT_ENTRY: return "entry";
+        case CONTEXT_BOOTUP: return "bootup";
+        case CONTEXT_FRONTEND: return "frontend";
+        case CONTEXT_LOADING_DEMO: return "loading_demo";
+        case CONTEXT_DEMO: return "demo";
+        case CONTEXT_SUPERSPRINT_FE: return "supersprint_fe";
+        case CONTEXT_LOADING_SUPERSPRINT: return "loading_supersprint";
+        case CONTEXT_SUPERSPRINT: return "supersprint";
+        case CONTEXT_LOADING_GAMEPLAY: return "loading_gameplay";
+        case CONTEXT_GAMEPLAY: return "gameplay";
+        case CONTEXT_PAUSE: return "pause";
+        case CONTEXT_EXIT: return "exit";
+        default: return "unknown";
+    }
+}
+#endif
 
 //******************************************************************************
 //
@@ -488,7 +511,7 @@ void Game::Run()
 
 #endif
 
-    unsigned time = radTimeGetMilliseconds();
+    radTime64 timeUs = radTimeGetMicroseconds64();
     while( !mExitNow )
     {
         DEMOPROFILE( g_DemoProfiler.Start(PROFILE_CHANNEL_ALL); )
@@ -497,17 +520,51 @@ void Game::Run()
 
         BEGIN_PROFILE( "GameLoop" )
 
-        unsigned newTime = radTimeGetMilliseconds();
-        unsigned elapsed = newTime - time;
-        time = newTime;
+        // Microsecond clock — integer ms alone quantizes 60Hz to 15/16/17 and
+        // hides real pacing. Wall ms feeds diagnostics; sim ms is hitch-clamped.
+        const radTime64 newTimeUs = radTimeGetMicroseconds64();
+        unsigned wallMs = static_cast<unsigned>( ( newTimeUs - timeUs ) / 1000ull );
+        timeUs = newTimeUs;
+        if ( wallMs < 1 )
+        {
+            wallMs = 1;
+        }
+        unsigned elapsed = wallMs;
+
+#if defined(RAD_MACOS) || defined(RAD_TVOS)
+        SRR2::Diagnostics::RecordWallFrame( wallMs );
+        // Evidence (Mac gameplay): wall_ms=22–47 while avg≈16–17 made cars/peds
+        // jump. Cap sim at 20ms (~1.25 frames). Shared with tvOS path. No
+        // SDL_Delay / no skipped GameFlow (those felt laggy).
+        if ( wallMs >= 22 )
+        {
+            SRR2::Diagnostics::Anomalyf(
+                SRR2::Diagnostics::FRAME,
+                "[FRAME_JITTER] wall_ms=%u sim_ms=%u (60Hz budget≈16)",
+                wallMs,
+                ( wallMs > 20 ) ? 20u : wallMs );
+        }
+        if ( elapsed > 20 )
+        {
+            elapsed = 20;
+        }
+#endif
+
+#ifdef RAD_TVOS
+        SRR2::Diagnostics::SetContextValue( "context", TvosDiagContextName( GetGameFlow()->GetCurrentContext() ) );
+        // BeginFrame uses WALL time so SESSION_SUMMARY proves real stalls.
+        SRR2::Diagnostics::BeginFrame( mFrameCount + 1, wallMs );
+#endif
 
         //
         // Service the windows message loop.
         //
 #ifdef RAD_SDL_PLATFORM
         SDL_Event msg;
+        unsigned int tvosDiagSdlEvents = 0;
         while( SDL_PollEvent( &msg ) )
         {
+            ++tvosDiagSdlEvents;
             if( msg.type == SDL_QUIT )
             {
                 //Chuck someone closed the Window we are going to try to exit the game 
@@ -528,6 +585,9 @@ void Game::Run()
                 }               
             }
         }
+#ifdef RAD_TVOS
+        SRR2::Diagnostics::RecordInputPump( tvosDiagSdlEvents );
+#endif
 #endif // RAD_SDL_PLATFORM
 
         //
@@ -600,6 +660,10 @@ void Game::Run()
         DEMOPROFILE( g_DemoProfiler.Stop(PROFILE_CHANNEL_LOAD); )
 
         ++mFrameCount;
+
+#ifdef RAD_TVOS
+        SRR2::Diagnostics::EndFrame();
+#endif
 
         DEMOPROFILE( g_DemoProfiler.Stop(PROFILE_CHANNEL_ALL); )
 

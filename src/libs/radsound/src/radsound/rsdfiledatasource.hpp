@@ -7,6 +7,10 @@
 #include <radsound.hpp>
 #include <radfile.hpp>
 
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_AUDIO_DIAGNOSTICS )
+#include <radtime.hpp>
+#endif
+
 struct radSoundRsdFileDataSource
 	:
 	public IRadSoundRsdFileDataSource,
@@ -102,4 +106,17 @@ struct radSoundRsdFileDataSource
 		ref< IRadFile >                       m_refIRadFile;
 		
 		char fileName[ 64 ];
+
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_AUDIO_DIAGNOSTICS )
+		radTime64 m_diagAsyncReadStartUs;
+		radTime64 m_diagT0;
+		radTime64 m_diagFirstGetStateUs;
+		radTime64 m_diagOpenSubmitUs;
+		radTime64 m_diagOpenCompleteUs;
+		radTime64 m_diagHeaderReadSubmitUs;
+		radTime64 m_diagHeaderReadCompleteUs;
+		bool m_diagEmittedFileReadyLog;
+		unsigned int m_diagDataReadSubmitCount;
+		unsigned int m_diagDataReadCompleteCount;
+#endif
 };

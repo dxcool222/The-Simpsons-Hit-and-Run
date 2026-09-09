@@ -29,6 +29,7 @@
 #include "radmoviefile.hpp"
 #include "ffmpegmovieplayer.hpp"
 #include "audiodatasource.hpp"
+#include <diagnostics/tvosdiagnostics.h>
 
 #include <vector>
 
@@ -245,25 +246,11 @@ void radMoviePlayer::Load( const char * pVideoFileName, unsigned int audioTrackI
     std::string resolvedPath = radMovieResolveTvosPath( pVideoFileName );
     const char* actualPath = resolvedPath.c_str();
     
-    // ========================================================================
-    // VIDEO LOAD DIAGNOSTIC
-    // ========================================================================
-    SDL_Log( "========================================================" );
-    SDL_Log( "[VIDEO_LOAD] *** LOADING VIDEO FILE ***" );
-    SDL_Log( "[VIDEO_LOAD] Input path: %s", pVideoFileName );
-    SDL_Log( "[VIDEO_LOAD] Resolved path: %s", actualPath );
-    
-    // Check if file exists
-    FILE* testFile = fopen( actualPath, "rb" );
-    if ( testFile ) {
-        fseek( testFile, 0, SEEK_END );
-        long fileSize = ftell( testFile );
-        fclose( testFile );
-        SDL_Log( "[VIDEO_LOAD] File EXISTS, size=%ld bytes", fileSize );
-    } else {
-        SDL_Log( "[VIDEO_LOAD] CRITICAL ERROR: File does NOT exist or cannot be opened!" );
-    }
-    SDL_Log( "========================================================" );
+    SRR2::Diagnostics::Checkpointf(
+        SRR2::Diagnostics::VIDEO,
+        "[VIDEO_LOAD_BEGIN] input=%s resolved=%s",
+        pVideoFileName ? pVideoFileName : "",
+        actualPath ? actualPath : "" );
 #else
     const char* actualPath = pVideoFileName;
 #endif
@@ -285,9 +272,16 @@ void radMoviePlayer::Load( const char * pVideoFileName, unsigned int audioTrackI
     if ( openResult < 0 ) {
         char errBuf[AV_ERROR_MAX_STRING_SIZE];
         av_strerror( openResult, errBuf, AV_ERROR_MAX_STRING_SIZE );
-        SDL_Log( "[VIDEO_LOAD] CRITICAL ERROR: avformat_open_input FAILED: %s", errBuf );
+        SRR2::Diagnostics::Errorf(
+            SRR2::Diagnostics::VIDEO,
+            "[VIDEO_LOAD_FAILED] api=avformat_open_input path=%s error=%s",
+            actualPath ? actualPath : "",
+            errBuf );
     } else {
-        SDL_Log( "[VIDEO_LOAD] avformat_open_input SUCCESS" );
+        SRR2::Diagnostics::Tracef(
+            SRR2::Diagnostics::VIDEO,
+            "video_open_success path=%s",
+            actualPath ? actualPath : "" );
     }
 #endif
     AV_CHK( openResult );
@@ -364,16 +358,21 @@ void radMoviePlayer::Load( const char * pVideoFileName, unsigned int audioTrackI
         pVideoParams->format, m_AudioTrackIndex );
 
 #ifdef RAD_TVOS
-    SDL_Log( "========================================================" );
-    SDL_Log( "[VIDEO_LOAD] *** VIDEO LOADED SUCCESSFULLY ***" );
-    SDL_Log( "[VIDEO_LOAD] Resolution: %dx%d", pVideoParams->width, pVideoParams->height );
-    SDL_Log( "[VIDEO_LOAD] Pixel Format: %d (YUV420P=%d)", pVideoParams->format, AV_PIX_FMT_YUV420P );
-    SDL_Log( "[VIDEO_LOAD] Audio Track: %d", m_AudioTrackIndex );
-    SDL_Log( "[VIDEO_LOAD] SwsContext: %p (needed for color conversion)", (void*)m_pSwsCtx );
+    SRR2::Diagnostics::Checkpointf(
+        SRR2::Diagnostics::VIDEO,
+        "[VIDEO_LOAD_READY] resolution=%dx%d pixelFormat=%d yuv420p=%d audioTrack=%d sws=%p",
+        pVideoParams->width,
+        pVideoParams->height,
+        pVideoParams->format,
+        AV_PIX_FMT_YUV420P,
+        m_AudioTrackIndex,
+        (void*)m_pSwsCtx );
     if ( !m_pSwsCtx ) {
-        SDL_Log( "[VIDEO_LOAD] WARNING: SwsContext is NULL - color conversion will fail!" );
+        SRR2::Diagnostics::Anomalyf(
+            SRR2::Diagnostics::VIDEO,
+            "[VIDEO_SWS_MISSING] path=%s",
+            actualPath ? actualPath : "" );
     }
-    SDL_Log( "========================================================" );
 #endif
 
     // The buffered data source's input must be set before the stream player's
@@ -625,27 +624,39 @@ void radMoviePlayer::Service( void )
                             static bool s_swsDiagDone = false;
                             if ( !s_swsDiagDone && s_VideoFrameDecodeCount <= 3 ) {
                                 s_swsDiagDone = true;
-                                SDL_Log( "========================================================" );
-                                SDL_Log( "[VIDEO_DECODE] *** SWS_SCALE DIAGNOSTIC ***" );
-                                SDL_Log( "[VIDEO_DECODE] SwsContext: %p", (void*)m_pSwsCtx );
-                                SDL_Log( "[VIDEO_DECODE] Source: YUV %dx%d linesize=[%d,%d,%d]",
-                                         m_pVideoFrame->width, m_pVideoFrame->height,
-                                         m_pVideoFrame->linesize[0], m_pVideoFrame->linesize[1], m_pVideoFrame->linesize[2] );
-                                SDL_Log( "[VIDEO_DECODE] Source data ptrs: [%p,%p,%p]",
-                                         (void*)m_pVideoFrame->data[0], (void*)m_pVideoFrame->data[1], (void*)m_pVideoFrame->data[2] );
-                                SDL_Log( "[VIDEO_DECODE] Dest: BGRA %dx%d pitch=%d", dest.m_Width, dest.m_Height, destPitch );
-                                SDL_Log( "[VIDEO_DECODE] Dest ptr: pDest=%p (positive pitch, direct write)", (void*)pDest );
-                                SDL_Log( "[VIDEO_DECODE] SrcPosY=%u sliceHeight=%d", dest.m_SrcPosY, m_pVideoFrame->height - dest.m_SrcPosY );
+                                SRR2::Diagnostics::Tracef(
+                                    SRR2::Diagnostics::VIDEO,
+                                    "[VIDEO_DECODE_TRACE] sws=%p src=%dx%d lines=%d,%d,%d srcPtrs=%p,%p,%p dest=%dx%d pitch=%d destPtr=%p srcY=%u slice=%d",
+                                    (void*)m_pSwsCtx,
+                                    m_pVideoFrame->width,
+                                    m_pVideoFrame->height,
+                                    m_pVideoFrame->linesize[0],
+                                    m_pVideoFrame->linesize[1],
+                                    m_pVideoFrame->linesize[2],
+                                    (void*)m_pVideoFrame->data[0],
+                                    (void*)m_pVideoFrame->data[1],
+                                    (void*)m_pVideoFrame->data[2],
+                                    dest.m_Width,
+                                    dest.m_Height,
+                                    destPitch,
+                                    (void*)pDest,
+                                    dest.m_SrcPosY,
+                                    m_pVideoFrame->height - dest.m_SrcPosY );
                                 
                                 // Check if source frame has data
                                 if ( m_pVideoFrame->data[0] ) {
                                     uint8_t y0 = m_pVideoFrame->data[0][0];
                                     uint8_t y1 = m_pVideoFrame->data[0][1];
-                                    SDL_Log( "[VIDEO_DECODE] Source Y plane sample: [%u, %u]", y0, y1 );
+                                    SRR2::Diagnostics::Tracef(
+                                        SRR2::Diagnostics::VIDEO,
+                                        "[VIDEO_DECODE_TRACE] ySample=%u,%u",
+                                        y0,
+                                        y1 );
                                 } else {
-                                    SDL_Log( "[VIDEO_DECODE] ERROR: Source Y plane is NULL!" );
+                                    SRR2::Diagnostics::Errorf(
+                                        SRR2::Diagnostics::VIDEO,
+                                        "[VIDEO_DECODE_SOURCE_NULL] plane=Y" );
                                 }
-                                SDL_Log( "========================================================" );
                             }
                             
                             int swsResult = sws_scale( m_pSwsCtx,
@@ -657,7 +668,10 @@ void radMoviePlayer::Service( void )
                             static bool s_swsResultDiagDone = false;
                             if ( !s_swsResultDiagDone && s_VideoFrameDecodeCount <= 3 ) {
                                 s_swsResultDiagDone = true;
-                                SDL_Log( "[VIDEO_DECODE] sws_scale returned: %d", swsResult );
+                                SRR2::Diagnostics::Tracef(
+                                    SRR2::Diagnostics::VIDEO,
+                                    "[VIDEO_DECODE_TRACE] swsResult=%d",
+                                    swsResult );
                                 uint8_t* pDestCheck = (uint8_t*)dest.m_pDest;  // Re-get dest pointer
                                 if ( swsResult > 0 && pDestCheck ) {
                                     // Check output BGRA data
@@ -665,11 +679,28 @@ void radMoviePlayer::Service( void )
                                     uint8_t g = pDestCheck[1];
                                     uint8_t r = pDestCheck[2];
                                     uint8_t a = pDestCheck[3];
-                                    SDL_Log( "[VIDEO_DECODE] Output BGRA sample: B=%u G=%u R=%u A=%u", b, g, r, a );
                                     bool allZero = (b == 0 && g == 0 && r == 0);
-                                    SDL_Log( "[VIDEO_DECODE] Output is %s", allZero ? "ALL BLACK - BAD!" : "has color data - GOOD" );
+                                    SRR2::Diagnostics::Tracef(
+                                        SRR2::Diagnostics::VIDEO,
+                                        "[VIDEO_DECODE_TRACE] bgra=%u,%u,%u,%u allZero=%d",
+                                        b,
+                                        g,
+                                        r,
+                                        a,
+                                        allZero ? 1 : 0 );
+                                    if ( allZero )
+                                    {
+                                        SRR2::Diagnostics::Anomalyf(
+                                            SRR2::Diagnostics::VIDEO,
+                                            "[VIDEO_DECODE_BLACK_SAMPLE] swsResult=%d",
+                                            swsResult );
+                                    }
                                 } else {
-                                    SDL_Log( "[VIDEO_DECODE] ERROR: sws_scale FAILED or dest ptr is NULL!" );
+                                    SRR2::Diagnostics::Errorf(
+                                        SRR2::Diagnostics::VIDEO,
+                                        "[VIDEO_DECODE_SWS_FAILED] swsResult=%d dest=%p",
+                                        swsResult,
+                                        (void*)pDestCheck );
                                 }
                             }
                             

@@ -64,6 +64,8 @@ protected:
     ~radLoadManager();
 
     void InternalService();
+    // Process at most one queued file/callback. Used on Mac (main-thread loads).
+    void ProcessOneQueueItem();
 
     bool m_bSyncLoading;
     bool m_bDone;

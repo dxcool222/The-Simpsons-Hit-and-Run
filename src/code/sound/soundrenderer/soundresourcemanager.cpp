@@ -31,6 +31,10 @@
 
 #include <memory/srrmemory.h>
 
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_AUDIO_DIAGNOSTICS )
+#include <sound/diagnostics/audioloaddiag.hpp>
+#endif
+
 //=============================================================================
 // Namespace
 //=============================================================================
@@ -335,8 +339,12 @@ void daSoundResourceManager::SetResourceLockdown( bool lockdown )
         for( unsigned int f = 0; f < pRd->m_NumFiles; f ++ )
         {
             FlipSlashes( pRd->m_pFileIds[ f ].m_pName );
-            
-            pCurrent[ f ].m_Key = ::radMakeCaseInsensitiveKey32( pRd->m_pFileIds[ f ].m_pName );
+
+            radKey32 const fileKey = ::radMakeCaseInsensitiveKey32( pRd->m_pFileIds[ f ].m_pName );
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_AUDIO_DIAGNOSTICS )
+            ::AudioLoadDiag::RegisterKeyLiteralPath( fileKey, pRd->m_pFileIds[ f ].m_pName );
+#endif
+            pCurrent[ f ].m_Key = fileKey;
             radMemoryFree( pRd->m_pFileIds[ f ].m_pName );
         }
 

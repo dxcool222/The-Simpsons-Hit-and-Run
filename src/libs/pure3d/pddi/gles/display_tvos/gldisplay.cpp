@@ -14,7 +14,35 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <string>
 #include <vector>
+#include <diagnostics/tvosdiagnostics.h>
+
+#if defined(RAD_MACOS)
+#include <OpenGL/OpenGL.h>
+
+static void MacForceVsync( void )
+{
+    // SDL_GL_SetSwapInterval(1) alone still left avg_frame_ms=1 in live logs.
+    SDL_GL_SetSwapInterval( 1 );
+    CGLContextObj cgl = CGLGetCurrentContext();
+    if ( cgl )
+    {
+        GLint swap = 1;
+        CGLSetParameter( cgl, kCGLCPSwapInterval, &swap );
+    }
+}
+#endif
+
+#if defined( RAD_TVOS_RENDER_DIAGNOSTICS )
+    #define TVOS_RENDER_DIAG(...) SRR2::Diagnostics::AutoLogf(SRR2::Diagnostics::RENDER, __VA_ARGS__)
+#else
+    #define TVOS_RENDER_DIAG(...) ((void)0)
+#endif
+
+#if defined( RAD_TVOS_PRESENT_STATE_RESTORE ) || defined( RAD_TVOS_RENDER_DIAGNOSTICS )
+    #define TVOS_RESTORE_PRESENT_STATE 1
+#endif
 
 static const int kRenderWidth = 1920;
 static const int kRenderHeight = 1080;
@@ -45,16 +73,48 @@ static const char* GlErrorToString( GLenum err )
 
 static void LogGlErrorOnce( const char* tag )
 {
+#if defined( RAD_TVOS_RENDER_DIAGNOSTICS )
     GLenum err = glGetError( );
     if ( err != GL_NO_ERROR )
     {
-        SDL_Log( "TVOS_GL_ERR %s: 0x%x (%s)", tag ? tag : "", (unsigned)err, GlErrorToString( err ) );
+        SRR2::Diagnostics::RecordGlError( tag, (uint32_t)err );
+        SRR2::Diagnostics::Tracef(
+            SRR2::Diagnostics::RENDER,
+            "gl_error_text tag=%s err=0x%x text=%s",
+            tag ? tag : "",
+            (unsigned)err,
+            GlErrorToString( err ) );
     }
+#else
+    (void) tag;
+#endif
 }
 
 static bool CompileShaderWithLog( GLuint shader, const char* src, const char* label )
 {
+#if defined(RAD_MACOS)
+    std::string macSrc;
+    macSrc.reserve( strlen( src ) + 64 );
+    macSrc += "#version 120\n";
+    const char* p = src;
+    while ( *p )
+    {
+        const char* lineStart = p;
+        while ( *p && *p != '\n' ) ++p;
+        size_t len = (size_t)( p - lineStart );
+        std::string line( lineStart, len );
+        if ( line.find( "precision " ) == std::string::npos )
+        {
+            macSrc.append( lineStart, len );
+            if ( *p == '\n' ) macSrc.push_back( '\n' );
+        }
+        if ( *p == '\n' ) ++p;
+    }
+    const char* srcPtr = macSrc.c_str();
+    glShaderSource( shader, 1, &srcPtr, NULL );
+#else
     glShaderSource( shader, 1, &src, NULL );
+#endif
     glCompileShader( shader );
 
     GLint ok = 0;
@@ -65,13 +125,20 @@ static bool CompileShaderWithLog( GLuint shader, const char* src, const char* la
         glGetShaderiv( shader, GL_INFO_LOG_LENGTH, &len );
         if ( len < 1 )
         {
-            SDL_Log( "TVOS_GL Shader compile failed (%s): <no log>", label ? label : "" );
+            SRR2::Diagnostics::Errorf(
+                SRR2::Diagnostics::RENDER,
+                "[SHADER_COMPILE_FAILED] label=%s log=<none>",
+                label ? label : "" );
         }
         else
         {
             std::vector<GLchar> buf( (size_t)len );
             glGetShaderInfoLog( shader, len, &len, buf.data( ) );
-            SDL_Log( "TVOS_GL Shader compile failed (%s): %s", label ? label : "", buf.data( ) );
+            SRR2::Diagnostics::Errorf(
+                SRR2::Diagnostics::RENDER,
+                "[SHADER_COMPILE_FAILED] label=%s log=%s",
+                label ? label : "",
+                buf.data( ) );
         }
         return false;
     }
@@ -90,13 +157,18 @@ static bool LinkProgramWithLog( GLuint program )
         glGetProgramiv( program, GL_INFO_LOG_LENGTH, &len );
         if ( len < 1 )
         {
-            SDL_Log( "TVOS_GL Program link failed: <no log>" );
+            SRR2::Diagnostics::Errorf(
+                SRR2::Diagnostics::RENDER,
+                "[PROGRAM_LINK_FAILED] log=<none>" );
         }
         else
         {
             std::vector<GLchar> buf( (size_t)len );
             glGetProgramInfoLog( program, len, &len, buf.data( ) );
-            SDL_Log( "TVOS_GL Program link failed: %s", buf.data( ) );
+            SRR2::Diagnostics::Errorf(
+                SRR2::Diagnostics::RENDER,
+                "[PROGRAM_LINK_FAILED] log=%s",
+                buf.data( ) );
         }
         return false;
     }
@@ -121,6 +193,9 @@ pglDisplay::pglDisplay( pddiDisplayInfo* info )
     win = NULL;
     hRC = NULL;
     prevRC = NULL;
+#if defined(RAD_MACOS)
+    hRCLoad = NULL;
+#endif
 
     extBGRA = false;
 
@@ -137,8 +212,43 @@ pglDisplay::pglDisplay( pddiDisplayInfo* info )
     mWindowColorRB = 0;
 }
 
+#if defined(RAD_MACOS)
+static pglDisplay* s_macDisplayForLoad = NULL;
+
+void pglDisplay::EnsureLoadThreadContext( void )
+{
+    // Display/GL may come up after radLoad's worker starts; wait briefly.
+    for ( int i = 0; i < 5000; ++i )
+    {
+        pglDisplay* d = s_macDisplayForLoad;
+        if ( d && d->win && d->hRCLoad )
+        {
+            if ( SDL_GL_GetCurrentContext() != d->hRCLoad )
+            {
+                if ( SDL_GL_MakeCurrent( d->win, (SDL_GLContext)d->hRCLoad ) != 0 )
+                {
+                    TVOS_RENDER_DIAG( "TVOS_GL Load-thread MakeCurrent failed: %s", SDL_GetError() );
+                }
+            }
+            return;
+        }
+        SDL_Delay( 1 );
+    }
+    TVOS_RENDER_DIAG( "TVOS_GL Load-thread context not ready after wait" );
+}
+#endif
+
 pglDisplay::~pglDisplay()
 {
+#if defined(RAD_MACOS)
+    if ( s_macDisplayForLoad == this )
+        s_macDisplayForLoad = NULL;
+    if ( hRCLoad )
+    {
+        SDL_GL_DeleteContext( (SDL_GLContext)hRCLoad );
+        hRCLoad = NULL;
+    }
+#endif
     if ( hRC )
     {
         SDL_GL_MakeCurrent( win, hRC );
@@ -177,7 +287,7 @@ static void CreateRenderTargets( GLuint* outFBO, GLuint* outColor, GLuint* outDe
     GLint prevFB = 0;
     glGetIntegerv( GL_FRAMEBUFFER_BINDING, &prevFB );
 
-    SDL_Log( "TVOS_GL CreateRenderTargets begin: %dx%d", kRenderWidth, kRenderHeight );
+    TVOS_RENDER_DIAG( "TVOS_GL CreateRenderTargets begin: %dx%d", kRenderWidth, kRenderHeight );
     glGenTextures( 1, outColor );
     glBindTexture( GL_TEXTURE_2D, *outColor );
     glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR );
@@ -192,17 +302,23 @@ static void CreateRenderTargets( GLuint* outFBO, GLuint* outColor, GLuint* outDe
     // Use 24-bit depth buffer to prevent z-fighting and see-through terrain issues
     // GL_DEPTH_COMPONENT24 is available on tvOS via GL_OES_depth24 extension
     // Check extension support and fall back to 16-bit if needed
+#if defined(RAD_MACOS)
+    bool hasDepth24 = true;
+#else
     bool hasDepth24 = SDL_GL_ExtensionSupported( "GL_OES_depth24" ) == SDL_TRUE;
+#endif
     if ( hasDepth24 )
     {
         glRenderbufferStorage( GL_RENDERBUFFER, GL_DEPTH_COMPONENT24_OES, kRenderWidth, kRenderHeight );
-        SDL_Log( "TVOS_GL Using 24-bit depth buffer (GL_OES_depth24 supported)" );
+        TVOS_RENDER_DIAG( "TVOS_GL Using 24-bit depth buffer (GL_OES_depth24 supported)" );
     }
     else
     {
         // Fallback to 16-bit depth - may cause Z-fighting issues
         glRenderbufferStorage( GL_RENDERBUFFER, GL_DEPTH_COMPONENT16, kRenderWidth, kRenderHeight );
-        SDL_Log( "TVOS_GL WARNING: Using 16-bit depth buffer (GL_OES_depth24 NOT supported) - may cause Z-fighting!" );
+        SRR2::Diagnostics::Anomalyf(
+            SRR2::Diagnostics::RENDER,
+            "[DEPTH_FALLBACK] using=16bit reason=GL_OES_depth24_missing risk=z_fighting" );
     }
     LogGlErrorOnce( "CreateRenderTargets.DepthBuffer" );
 
@@ -212,7 +328,7 @@ static void CreateRenderTargets( GLuint* outFBO, GLuint* outColor, GLuint* outDe
     glFramebufferRenderbuffer( GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, *outDepth );
 
     GLenum status = glCheckFramebufferStatus( GL_FRAMEBUFFER );
-    SDL_Log( "TVOS_GL CreateRenderTargets FBO=%u Color=%u Depth=%u status=0x%x", (unsigned)*outFBO, (unsigned)*outColor, (unsigned)*outDepth, (unsigned)status );
+    TVOS_RENDER_DIAG( "TVOS_GL CreateRenderTargets FBO=%u Color=%u Depth=%u status=0x%x", (unsigned)*outFBO, (unsigned)*outColor, (unsigned)*outDepth, (unsigned)status );
     PDDIASSERT( status == GL_FRAMEBUFFER_COMPLETE );
     LogGlErrorOnce( "CreateRenderTargets.FBO" );
 
@@ -263,6 +379,20 @@ bool pglDisplay::InitDisplay( const pddiDisplayInit* init )
 
     SDL_GL_MakeCurrent( win, hRC );
 
+#if defined(RAD_MACOS)
+    // Second context shares objects with hRC so the radLoad worker can upload textures.
+    SDL_GL_SetAttribute( SDL_GL_SHARE_WITH_CURRENT_CONTEXT, 1 );
+    hRCLoad = SDL_GL_CreateContext( win );
+    PDDIASSERT( hRCLoad );
+    SDL_GL_MakeCurrent( win, (SDL_GLContext)hRC );
+    MacForceVsync();
+    {
+        int interval = SDL_GL_GetSwapInterval();
+        TVOS_RENDER_DIAG( "TVOS_GL Shared load context created: loadCtx=%p swapInterval=%d", hRCLoad, interval );
+    }
+    s_macDisplayForLoad = this;
+#endif
+
     // Capture SDL's window surface bindings (on iOS/tvOS this may not be framebuffer 0).
     {
         GLint fb = 0;
@@ -271,7 +401,7 @@ bool pglDisplay::InitDisplay( const pddiDisplayInit* init )
         glGetIntegerv( GL_RENDERBUFFER_BINDING, &rb );
         mWindowFBO = (GLuint)fb;
         mWindowColorRB = (GLuint)rb;
-        SDL_Log( "TVOS_GL Window surface bindings: fb=%u rb=%u", (unsigned)mWindowFBO, (unsigned)mWindowColorRB );
+        TVOS_RENDER_DIAG( "TVOS_GL Window surface bindings: fb=%u rb=%u", (unsigned)mWindowFBO, (unsigned)mWindowColorRB );
         LogGlErrorOnce( "InitDisplay.WindowSurfaceBindings" );
     }
 
@@ -289,7 +419,7 @@ bool pglDisplay::InitDisplay( const pddiDisplayInit* init )
         SDL_GL_GetAttribute( SDL_GL_STENCIL_SIZE, &stencil );
         SDL_GL_GetAttribute( SDL_GL_DOUBLEBUFFER, &dbl );
 
-        SDL_Log( "TVOS_GL Context created: ctx=%p prev=%p drawable=%dx%d rgba=%d/%d/%d/%d depth=%d stencil=%d dbl=%d",
+        TVOS_RENDER_DIAG( "TVOS_GL Context created: ctx=%p prev=%p drawable=%dx%d rgba=%d/%d/%d/%d depth=%d stencil=%d dbl=%d",
                  hRC, prevRC, drawableW, drawableH, r, g, b, a, depth, stencil, dbl );
     }
 
@@ -297,19 +427,24 @@ bool pglDisplay::InitDisplay( const pddiDisplayInit* init )
     char* glRenderer = (char*)glGetString( GL_RENDERER );
     char* glVersion = (char*)glGetString( GL_VERSION );
 
-    SDL_Log( "OpenGL ES - Vendor: %s, Renderer: %s, Version: %s", glVendor, glRenderer, glVersion );
+    SRR2::Diagnostics::Checkpointf(
+        SRR2::Diagnostics::RENDER,
+        "[GL_CONTEXT] vendor=%s renderer=%s version=%s",
+        glVendor ? glVendor : "<null>",
+        glRenderer ? glRenderer : "<null>",
+        glVersion ? glVersion : "<null>" );
     LogGlErrorOnce( "InitDisplay.glGetString" );
 
     // Apple's OpenGL ES on tvOS always supports BGRA textures via GL_EXT_texture_format_BGRA8888
     // Force this to true since extension string detection may fail but the functionality works
     extBGRA = true;
-    SDL_Log( "TVOS_GL extBGRA forced=true (Apple GPU supports BGRA)" );
+    TVOS_RENDER_DIAG( "TVOS_GL extBGRA forced=true (Apple GPU supports BGRA)" );
 
     CreateRenderTargets( &mRenderFBO, &mRenderColor, &mRenderDepth );
 
     glBindFramebuffer( GL_FRAMEBUFFER, mRenderFBO );
     GLenum rtStatus = glCheckFramebufferStatus( GL_FRAMEBUFFER );
-    SDL_Log( "TVOS_GL RenderFBO bound=%u status=0x%x", (unsigned)mRenderFBO, (unsigned)rtStatus );
+    TVOS_RENDER_DIAG( "TVOS_GL RenderFBO bound=%u status=0x%x", (unsigned)mRenderFBO, (unsigned)rtStatus );
     glBindFramebuffer( GL_FRAMEBUFFER, mWindowFBO );
     LogGlErrorOnce( "InitDisplay.RenderFBO" );
 
@@ -420,21 +555,27 @@ void pglDisplay::SwapBuffers( void )
             int mkErr = SDL_GL_MakeCurrent( win, hRC );
             if ( mkErr != 0 )
             {
-                SDL_Log( "TVOS_GL SwapBuffers: SDL_GL_MakeCurrent failed: %s", SDL_GetError() );
+                SRR2::Diagnostics::Errorf(
+                    SRR2::Diagnostics::RENDER,
+                    "[PRESENT_CONTEXT_FAILED] call=SDL_GL_MakeCurrent error=%s",
+                    SDL_GetError() );
             }
         }
     }
 
+#if defined( RAD_TVOS_RENDER_DIAGNOSTICS )
     // Reset GL error state so we can attribute any errors to the present path.
     while ( glGetError() != GL_NO_ERROR )
     {
     }
+#endif
 
     // Present the fixed-resolution FBO to the default framebuffer.
     int drawableW = 0;
     int drawableH = 0;
     SDL_GL_GetDrawableSize( win, &drawableW, &drawableH );
 
+#if defined( TVOS_RESTORE_PRESENT_STATE )
     GLint prevProgram = 0;
     GLint prevActiveTex = 0;
     GLint prevTex2D = 0;
@@ -476,6 +617,7 @@ void pglDisplay::SwapBuffers( void )
     GLint prevVAO = 0;
     glGetIntegerv( GL_VERTEX_ARRAY_BINDING_OES, &prevVAO );
 #endif
+#endif
 
     glBindFramebuffer( GL_FRAMEBUFFER, mWindowFBO );
 
@@ -485,28 +627,36 @@ void pglDisplay::SwapBuffers( void )
     if ( !s_checkedVAO )
     {
         s_checkedVAO = true;
-        s_hasVAO = CheckExtension( "GL_OES_vertex_array_object" );
-        SDL_Log( "TVOS_GL Present VAO support: %d", (int)s_hasVAO );
+        s_hasVAO = CheckExtension( "GL_OES_vertex_array_object" )
+#if defined(RAD_MACOS)
+            || CheckExtension( "GL_APPLE_vertex_array_object" )
+#endif
+            ;
+        TVOS_RENDER_DIAG( "TVOS_GL Present VAO support: %d", (int)s_hasVAO );
     }
 #endif
     glBindBuffer( GL_ARRAY_BUFFER, 0 );
     glBindBuffer( GL_ELEMENT_ARRAY_BUFFER, 0 );
 
+#if defined( RAD_TVOS_RENDER_DIAGNOSTICS )
     if ( ( s_swapCount <= 5 ) || ( ( s_swapCount % 300 ) == 0 ) )
     {
         GLint fb = 0;
         glGetIntegerv( GL_FRAMEBUFFER_BINDING, &fb );
-        SDL_Log( "TVOS_GL SwapBuffers #%u: drawable=%dx%d bindFB=%d windowFBO=%u windowRB=%u renderFBO=%u renderTex=%u", s_swapCount, drawableW, drawableH, (int)fb, (unsigned)mWindowFBO, (unsigned)mWindowColorRB, (unsigned)mRenderFBO, (unsigned)mRenderColor );
+        TVOS_RENDER_DIAG( "TVOS_GL SwapBuffers #%u: drawable=%dx%d bindFB=%d windowFBO=%u windowRB=%u renderFBO=%u renderTex=%u", s_swapCount, drawableW, drawableH, (int)fb, (unsigned)mWindowFBO, (unsigned)mWindowColorRB, (unsigned)mRenderFBO, (unsigned)mRenderColor );
     }
+#endif
 
     int vx, vy, vw, vh;
     ComputeLetterboxViewport( drawableW, drawableH, kRenderWidth, kRenderHeight, &vx, &vy, &vw, &vh );
 
     glViewport( vx, vy, vw, vh );
+#if defined( RAD_TVOS_RENDER_DIAGNOSTICS )
     if ( ( s_swapCount <= 5 ) || ( ( s_swapCount % 300 ) == 0 ) )
     {
-        SDL_Log( "TVOS_GL Present viewport: x=%d y=%d w=%d h=%d", vx, vy, vw, vh );
+        TVOS_RENDER_DIAG( "TVOS_GL Present viewport: x=%d y=%d w=%d h=%d", vx, vy, vw, vh );
     }
+#endif
 
 #ifdef RAD_TVOS
     // Diagnostic screens removed - rendering is working
@@ -519,10 +669,12 @@ void pglDisplay::SwapBuffers( void )
     glDisable( GL_BLEND );
     glColorMask( GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE );
 
+#if defined( RAD_TVOS_RENDER_DIAGNOSTICS )
     if ( ( s_swapCount <= 5 ) || ( ( s_swapCount % 300 ) == 0 ) )
     {
         LogGlErrorOnce( "SwapBuffers.PresentState" );
     }
+#endif
 
     static const char* vsSrc =
         "attribute vec2 aPos;\n"
@@ -554,14 +706,19 @@ void pglDisplay::SwapBuffers( void )
 
         if ( !( vsOk && fsOk && linkOk ) )
         {
-            SDL_Log( "TVOS_GL Present program creation failed (vsOk=%d fsOk=%d linkOk=%d)", (int)vsOk, (int)fsOk, (int)linkOk );
+            SRR2::Diagnostics::Errorf(
+                SRR2::Diagnostics::RENDER,
+                "[PRESENT_PROGRAM_FAILED] vsOk=%d fsOk=%d linkOk=%d",
+                (int)vsOk,
+                (int)fsOk,
+                (int)linkOk );
         }
 
         aPos = glGetAttribLocation( program, "aPos" );
         aUV = glGetAttribLocation( program, "aUV" );
         uTex = glGetUniformLocation( program, "uTex" );
 
-        SDL_Log( "TVOS_GL Present program=%u aPos=%d aUV=%d uTex=%d", (unsigned)program, (int)aPos, (int)aUV, (int)uTex );
+        TVOS_RENDER_DIAG( "TVOS_GL Present program=%u aPos=%d aUV=%d uTex=%d", (unsigned)program, (int)aPos, (int)aUV, (int)uTex );
         LogGlErrorOnce( "SwapBuffers.ProgramInit" );
     }
 
@@ -595,22 +752,28 @@ void pglDisplay::SwapBuffers( void )
     }
 
     glUseProgram( program );
+#if defined( RAD_TVOS_RENDER_DIAGNOSTICS )
     if ( ( s_swapCount <= 5 ) || ( ( s_swapCount % 300 ) == 0 ) )
     {
         LogGlErrorOnce( "SwapBuffers.glUseProgram" );
     }
+#endif
 
     glActiveTexture( GL_TEXTURE0 );
     glBindTexture( GL_TEXTURE_2D, mRenderColor );
+#if defined( RAD_TVOS_RENDER_DIAGNOSTICS )
     if ( ( s_swapCount <= 5 ) || ( ( s_swapCount % 300 ) == 0 ) )
     {
         LogGlErrorOnce( "SwapBuffers.glBindTexture" );
     }
+#endif
     glUniform1i( uTex, 0 );
+#if defined( RAD_TVOS_RENDER_DIAGNOSTICS )
     if ( ( s_swapCount <= 5 ) || ( ( s_swapCount % 300 ) == 0 ) )
     {
         LogGlErrorOnce( "SwapBuffers.glUniform1i" );
     }
+#endif
 
 #ifdef GL_OES_vertex_array_object
     if ( s_hasVAO )
@@ -629,16 +792,20 @@ void pglDisplay::SwapBuffers( void )
         glVertexAttribPointer( (GLuint)aUV, 2, GL_FLOAT, GL_FALSE, 4 * sizeof( GLfloat ), (const void*)( 2 * sizeof( GLfloat ) ) );
     }
 
+#if defined( RAD_TVOS_RENDER_DIAGNOSTICS )
     if ( ( s_swapCount <= 5 ) || ( ( s_swapCount % 300 ) == 0 ) )
     {
         LogGlErrorOnce( "SwapBuffers.VertexSetup" );
     }
+#endif
 
     glDrawArrays( GL_TRIANGLE_STRIP, 0, 4 );
+#if defined( RAD_TVOS_RENDER_DIAGNOSTICS )
     if ( ( s_swapCount <= 5 ) || ( ( s_swapCount % 300 ) == 0 ) )
     {
         LogGlErrorOnce( "SwapBuffers.Draw" );
     }
+#endif
 
 #ifdef GL_OES_vertex_array_object
     if ( s_hasVAO )
@@ -655,33 +822,49 @@ void pglDisplay::SwapBuffers( void )
 
     // SDL's tvOS swap/present path can be sensitive to the currently bound renderbuffer.
     glBindRenderbuffer( GL_RENDERBUFFER, mWindowColorRB );
+#if defined( RAD_TVOS_RENDER_DIAGNOSTICS )
     if ( ( s_swapCount <= 5 ) || ( ( s_swapCount % 300 ) == 0 ) )
     {
         GLint rb = 0;
         glGetIntegerv( GL_RENDERBUFFER_BINDING, &rb );
-        SDL_Log( "TVOS_GL PreSwap renderbuffer=%d", (int)rb );
+        TVOS_RENDER_DIAG( "TVOS_GL PreSwap renderbuffer=%d", (int)rb );
         LogGlErrorOnce( "SwapBuffers.PreSwap" );
     }
+#endif
 
+    SDL_ClearError();
     SDL_GL_SwapWindow( win );
+#if defined(RAD_MACOS)
+    // Re-assert after present; context switches / load ctx can drop it.
+    static unsigned s_vsyncReassert = 0;
+    if ( ( ++s_vsyncReassert % 120 ) == 0 )
+    {
+        MacForceVsync();
+    }
+#endif
+#if defined( RAD_TVOS_RENDER_DIAGNOSTICS )
     if ( ( s_swapCount <= 5 ) || ( ( s_swapCount % 300 ) == 0 ) )
     {
         const char* sdlErr = SDL_GetError();
         if ( sdlErr != NULL && sdlErr[0] != '\0' )
         {
-            SDL_Log( "TVOS_GL SDL_GL_SwapWindow SDL_GetError: %s", sdlErr );
+            TVOS_RENDER_DIAG( "TVOS_GL SDL_GL_SwapWindow SDL_GetError: %s", sdlErr );
         }
         LogGlErrorOnce( "SwapBuffers.SwapWindow" );
     }
+#endif
 
     // Rebind the render FBO for the next frame.
     glBindFramebuffer( GL_FRAMEBUFFER, mRenderFBO );
+#if defined( RAD_TVOS_RENDER_DIAGNOSTICS )
     if ( ( s_swapCount <= 5 ) || ( ( s_swapCount % 300 ) == 0 ) )
     {
         GLenum st = glCheckFramebufferStatus( GL_FRAMEBUFFER );
-        SDL_Log( "TVOS_GL PostSwap rebind renderFBO=%u status=0x%x", (unsigned)mRenderFBO, (unsigned)st );
+        TVOS_RENDER_DIAG( "TVOS_GL PostSwap rebind renderFBO=%u status=0x%x", (unsigned)mRenderFBO, (unsigned)st );
     }
+#endif
 
+#if defined( TVOS_RESTORE_PRESENT_STATE )
     glUseProgram( (GLuint)prevProgram );
     glActiveTexture( (GLenum)prevActiveTex );
     glBindTexture( GL_TEXTURE_2D, (GLuint)prevTex2D );
@@ -704,7 +887,30 @@ void pglDisplay::SwapBuffers( void )
 #ifndef RAD_VITAGL
     if ( prevDither ) glEnable( GL_DITHER ); else glDisable( GL_DITHER );
 #endif
-
+#else
+    if ( context != NULL )
+    {
+        context->InvalidateShaderProgram();
+    }
+    glUseProgram( 0 );
+    glActiveTexture( GL_TEXTURE0 );
+    glBindTexture( GL_TEXTURE_2D, 0 );
+    glBindBuffer( GL_ARRAY_BUFFER, 0 );
+    glBindBuffer( GL_ELEMENT_ARRAY_BUFFER, 0 );
+    glBindRenderbuffer( GL_RENDERBUFFER, 0 );
+    glEnable( GL_DEPTH_TEST );
+    glDepthMask( GL_TRUE );
+    glDepthFunc( GL_LEQUAL );
+    glEnable( GL_CULL_FACE );
+    glCullFace( GL_FRONT );
+    glDisable( GL_BLEND );
+    glDisable( GL_SCISSOR_TEST );
+    glDisable( GL_STENCIL_TEST );
+    glDisable( GL_POLYGON_OFFSET_FILL );
+#ifndef RAD_VITAGL
+    glEnable( GL_DITHER );
+#endif
+#endif
     glBindFramebuffer( GL_FRAMEBUFFER, mRenderFBO );
     glViewport( 0, 0, kRenderWidth, kRenderHeight );
 
@@ -744,6 +950,10 @@ void pglDisplay::BeginContext( void )
     prevRC = SDL_GL_GetCurrentContext();
     int error = SDL_GL_MakeCurrent( win, hRC );
     PDDIASSERT( !error );
+#if defined(RAD_MACOS)
+    // Re-assert vsync each activate; some drivers drop it after context switches.
+    MacForceVsync();
+#endif
 
     // Bind the fixed render target so PDDI renders into it.
     if ( mRenderFBO )

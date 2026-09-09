@@ -29,7 +29,12 @@ extern "C" int main( int argc, char *argv[] )
 {
     @autoreleasepool
     {
-        return SDL_UIKitRunApp( argc, argv, SDL_main );return SDL_UIKitRunApp( argc, argv, SDL_main );
+#if defined(RAD_MACOS)
+        // macOS/Cocoa SDL: call the game entry directly (no UIKit runner).
+        return SDL_main( argc, argv );
+#else
+        return SDL_UIKitRunApp( argc, argv, SDL_main );
+#endif
     }
 }
 
@@ -40,13 +45,14 @@ int SDL_main( int argc, char *argv[] )
     ProcessCommandLineArguments( argc, argv );
     ProcessCommandLineArgumentsFromFile();
 
-    // On tvOS, we use native GameController.framework instead of SDL for controller input.
+    // Use native GameController.framework instead of SDL for controller input.
     // SDL is only used for window/video/events. Controller input is handled by tvoscontroller.cpp
     // and code/input/tvos/tvos_controller.mm which use Apple's GameController.framework directly.
-    // This bypasses SDL2's broken controller support on tvOS.
     
-    // Disable SDL controller UI events since we're not using SDL for controllers
+#if !defined(RAD_MACOS)
+    // Disable SDL controller UI events since we're not using SDL for controllers (tvOS)
     SDL_SetHint(SDL_HINT_APPLE_TV_CONTROLLER_UI_EVENTS, "0");
+#endif
     
     // Initialize SDL for video and events only - NO controller/joystick subsystems
     SDL_Init( SDL_INIT_EVENTS | SDL_INIT_VIDEO );

@@ -397,10 +397,10 @@ static SoundClusterName s_ScriptClusters[] =
     SC_LEVEL6,
     SC_LEVEL7,
     SC_MINIGAME,
-    SC_ALWAYS_LOADED,
-    SC_ALWAYS_LOADED,
-    SC_ALWAYS_LOADED,
-    SC_ALWAYS_LOADED,
+    SC_FRONTEND,
+    SC_INGAME,
+    SC_INGAME,
+    SC_INGAME,
     SC_INGAME,
     SC_INGAME,
     SC_NEVER_LOADED,
@@ -674,6 +674,15 @@ void daSoundRenderingManager::Service( void )
     //
     ::radSoundHalSystemGet( )->Service( );
     SoundNucleusServiceClipLoad( );
+
+#ifdef RAD_TVOS
+    for( unsigned int i = 0; ( i < 2 ) && SoundNucleusIsClipLoadInProgress( ); ++i )
+    {
+        ::radFileService( );
+        ::radSoundHalSystemGet( )->Service( );
+        SoundNucleusServiceClipLoad( );
+    }
+#endif
 }
 
 //=============================================================================
@@ -1598,4 +1607,3 @@ void daSoundRenderingManager::registerDialogueCementFiles( const char* cementFil
 }
 
 } // Sound Namespace
-

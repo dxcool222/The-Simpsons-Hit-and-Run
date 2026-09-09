@@ -77,9 +77,16 @@ m_pMutex( NULL )
     m_pCallbacks = new RefQueue<radLoadCallback>( 32 );
     m_pCallbacks ->AddRef();
 
+#if defined(RAD_MACOS)
+    // macOS: load on the main/render thread. radLoad's worker+mutex handoff
+    // deadlocks under SDL/pthread mutexes when WaitForCompletion yields.
+    m_pMutex = NULL;
+    m_pThread = NULL;
+#else
     ::radThreadCreateMutex( &m_pMutex );
     m_pMutex->Lock();
     ::radThreadCreateThread( &m_pThread, radLoadManager::LoadThreadEntry, static_cast<void*>(this), IRadThread::PriorityNormal, init.loadThreadStackSize );
+#endif
 
 #ifdef RADLOAD_GATHER_STATS
 #ifdef RADLOAD_USE_WATCHER
@@ -164,6 +171,80 @@ radLoadFileLoader* radLoadManager::GetFileLoader( const char* extension )
     return m_pFileLoaders->Find( radMakeCaseInsensitiveKey( ext ) );
 }
 
+void radLoadManager::ProcessOneQueueItem()
+{
+    if( m_pLoadQueue->Empty() || m_pCurrent )
+    {
+        return;
+    }
+
+    radLoadObject* obj = m_pLoadQueue->Pop();
+    radLoadCallback* callback = dynamic_cast<radLoadCallback*>( obj );
+    if( callback )
+    {
+        m_pCallbacks->Push( callback );
+        return;
+    }
+
+    QueueItem* item = dynamic_cast<QueueItem*>( obj );
+    if( !item )
+    {
+        return;
+    }
+
+    m_pCurrent = item;
+    m_pCurrent->AddRef();
+    m_pCurrent->SetState( LOADING );
+
+    char* filename = item->GetOptions()->filename;
+
+    // Find the file extension.
+    int i = strlen( filename ) - 1;
+    while( i && ( filename[i] != '.' ) )
+    {
+        i--;
+    }
+    i++;
+
+    radLoadFileLoader* loader = m_pFileLoaders->Find( radMakeCaseInsensitiveKey( filename + i ) );
+    if( loader == NULL )
+    {
+        rReleasePrintf( "radLoad: no file loader for '%s' (ext='%s')\n", filename, filename + i );
+        m_pCurrent->SetState( CANCELED );
+        radLoadObject::Release( m_pCurrent );
+        return;
+    }
+
+    radMemoryAllocator old = ::radMemorySetCurrentAllocator( item->GetOptions()->allocator );
+    loader->LoadFile( item->GetOptions(), static_cast<radLoadUpdatableRequest*>( item ) );
+    ::radMemorySetCurrentAllocator( old );
+
+    if( m_pCurrent->GetState() == LOADING )
+    {
+        m_pCurrent->SetState( COMPLETE );
+    }
+#ifdef RADLOAD_GATHER_STATS
+    if( m_pCurrent->GetState() == COMPLETE )
+    {
+        m_completedLoads++;
+        unsigned int time = m_pCurrent->GetTotalLoadTime();
+        unsigned int queued = m_pCurrent->GetTotalQueuedTime();
+
+        m_minLoadTime = ( m_minLoadTime > time ) ? time : m_minLoadTime;
+        m_maxLoadTime = ( m_maxLoadTime < time ) ? time : m_maxLoadTime;
+        m_avgLoadTime = ( ( ( m_avgLoadTime * ( m_totalLoads - 1 ) ) / ( m_totalLoads ) ) +
+                ( time / m_totalLoads ) );
+
+        m_minQueuedTime = ( m_minQueuedTime > queued ) ? queued : m_minQueuedTime;
+        m_maxQueuedTime = ( m_maxQueuedTime < queued ) ? queued : m_maxQueuedTime;
+        m_avgQueuedTime = ( ( ( m_avgQueuedTime * ( m_totalLoads - 1 ) ) / ( m_totalLoads ) ) +
+                ( queued / m_totalLoads ) );
+    }
+    m_pendingLoads--;
+#endif
+    radLoadObject::Release( m_pCurrent );
+}
+
 void radLoadManager::InternalService()
 {
     m_pMutex->Lock();
@@ -171,78 +252,7 @@ void radLoadManager::InternalService()
     {
         if( !m_pLoadQueue->Empty() )
         {
-            radLoadObject* obj = m_pLoadQueue->Pop();
-            radLoadCallback* callback = dynamic_cast<radLoadCallback*>( obj );
-            if( callback )
-            {
-                m_pCallbacks->Push(callback);
-            }
-            else
-            {
-                QueueItem* item = dynamic_cast<QueueItem*>(obj);
-                if( item )
-                {
-                    m_pCurrent = item;
-                    m_pCurrent->AddRef();
-                    m_pCurrent->SetState( LOADING );
-
-                    char* filename = item->GetOptions()->filename;
-
-                    // Find the "." in filename.
-                    // Review: RAD: There are lots of functions that do this!  Try:
-                    /* 
-                    char* extension = strrchr( filename, '.' );
-                    rAssert( extension != NULL );
-                    extension++;
-                    */
-
-                    // Find the file extension.
-                    int i = strlen( filename ) - 1;
-                    while( i && (filename[i] != '.') )
-                    {
-                        i--;
-                    }
-                    i++;
-
-                    radLoadFileLoader* loader = m_pFileLoaders->Find( radMakeCaseInsensitiveKey( filename + i ) );
-                    if( loader == NULL )
-                    {
-                        rReleasePrintf( "radLoad: no file loader for '%s' (ext='%s')\n", filename, filename + i );
-                        m_pCurrent->SetState( CANCELED );
-                        radLoadObject::Release( m_pCurrent );
-                        continue;
-                    }
-                    radMemoryAllocator old = ::radMemorySetCurrentAllocator (item->GetOptions()->allocator);
-
-                    loader->LoadFile( item->GetOptions(), static_cast<radLoadUpdatableRequest*>( item ) );
-                    
-                    ::radMemorySetCurrentAllocator (old);
-                    if( m_pCurrent->GetState() == LOADING )
-                    {
-                        m_pCurrent->SetState( COMPLETE );
-                    }
-    #ifdef RADLOAD_GATHER_STATS
-                    if( m_pCurrent->GetState() == COMPLETE )
-                    {
-                        m_completedLoads++;
-                        unsigned int time = m_pCurrent->GetTotalLoadTime();
-                        unsigned int queued = m_pCurrent->GetTotalQueuedTime();
-                    
-                        m_minLoadTime = (m_minLoadTime > time) ? time : m_minLoadTime;
-                        m_maxLoadTime = (m_maxLoadTime < time) ? time : m_maxLoadTime;
-                        m_avgLoadTime = (((m_avgLoadTime * (m_totalLoads - 1))/(m_totalLoads)) +
-                                (time/m_totalLoads));
-
-                        m_minQueuedTime = (m_minQueuedTime > queued) ? queued : m_minQueuedTime;
-                        m_maxQueuedTime = (m_maxQueuedTime < queued) ? queued : m_maxQueuedTime;
-                        m_avgQueuedTime = (((m_avgQueuedTime * (m_totalLoads - 1))/(m_totalLoads)) +
-                                (queued/m_totalLoads));
-                    }
-                    m_pendingLoads--;
-    #endif
-                    radLoadObject::Release( m_pCurrent );
-                }
-            }
+            ProcessOneQueueItem();
         }
         else
         {
@@ -287,8 +297,13 @@ void radLoadManager::Load( radLoadOptions* options, radLoadRequest** request )
     {
         while( item->GetState() != COMPLETE && item->GetState() != CANCELED )
         {
+#if defined(RAD_MACOS)
+            ProcessOneQueueItem();
+            radFileService();
+#else
             SwitchTasks();
             radFileService();
+#endif
         }
     }
 }
@@ -369,10 +384,19 @@ void radLoadManager::RemoveFileLoader( radLoadFileLoader* loader )
 
 void radLoadManager::Service()
 {
+#if defined(RAD_MACOS)
+    // Outside an in-progress LoadFile, drain one queue item on this thread.
+    // Inside WaitForCompletion, only pump the file system (via SwitchTasks).
+    if( !m_pCurrent )
+    {
+        ProcessOneQueueItem();
+    }
+#else
     if( IsLoadPending() )
     {
         SwitchTasks();
     }
+#endif
 
     if(!m_pCallbacks->Empty())
     {
@@ -391,9 +415,15 @@ void radLoadManager::SetSyncLoading( bool sync )
 
 void radLoadManager::SwitchTasks()
 {
+#if defined(RAD_MACOS)
+    // Cooperative yield for async file I/O while loading on the main thread.
+    radFileService();
+    radThreadSleep( 0 );
+#else
     m_pMutex->Unlock();
     radThreadSleep(0);
     m_pMutex->Lock();
+#endif
 }
 
 void radLoadManager::Terminate()
@@ -404,11 +434,15 @@ void radLoadManager::Terminate()
     m_pLoadQueue->Release();
     m_pCallbacks->Release();
     m_bDone = true;
+#if defined(RAD_MACOS)
+    // No worker thread / mutex on Mac.
+#else
     m_pMutex->Unlock();
     m_pThread->WaitForTermination();
     m_pThread->Release();
 
     m_pMutex->Release();
+#endif
 
     delete this;
 }

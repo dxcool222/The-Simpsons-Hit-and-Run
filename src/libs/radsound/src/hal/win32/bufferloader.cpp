@@ -6,7 +6,7 @@
 #include "pch.hpp"
 #include "bufferloader.hpp"
 
-#ifdef RAD_TVOS
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_AUDIO_DIAGNOSTICS )
 #include <SDL.h>
 #endif
 
@@ -82,7 +82,7 @@ void radSoundBufferLoaderWin::Start( void )
 
 void radSoundBufferLoaderWin::OnDataSourceFramesLoaded( unsigned int framesActuallyRead )
 {
-#ifdef RAD_TVOS
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_AUDIO_DIAGNOSTICS )
     // Log loaded data for mono streams to verify data integrity
     unsigned int channels = m_xIRadSoundHalDataSource->GetFormat()->GetNumberOfChannels();
     if (channels == 1 && m_pBuffer != NULL && framesActuallyRead > 0) {
@@ -91,14 +91,14 @@ void radSoundBufferLoaderWin::OnDataSourceFramesLoaded( unsigned int framesActua
         if (numSamples >= 8) {
             if (bits == 8) {
                 uint8_t* samples = (uint8_t*)m_pBuffer;
-                SDL_Log("[MONO_DATA] frames=%u samples=[%u,%u,%u,%u,%u,%u,%u,%u] ptr=%p",
+                TVOS_AUDIO_DIAG("[MONO_DATA] frames=%u samples=[%u,%u,%u,%u,%u,%u,%u,%u] ptr=%p",
                         framesActuallyRead,
                         (unsigned)samples[0], (unsigned)samples[1], (unsigned)samples[2], (unsigned)samples[3],
                         (unsigned)samples[4], (unsigned)samples[5], (unsigned)samples[6], (unsigned)samples[7],
                         m_pBuffer);
             } else {
                 int16_t* samples = (int16_t*)m_pBuffer;
-                SDL_Log("[MONO_DATA] frames=%u samples=[%d,%d,%d,%d,%d,%d,%d,%d] ptr=%p",
+                TVOS_AUDIO_DIAG("[MONO_DATA] frames=%u samples=[%d,%d,%d,%d,%d,%d,%d,%d] ptr=%p",
                         framesActuallyRead,
                         samples[0], samples[1], samples[2], samples[3],
                         samples[4], samples[5], samples[6], samples[7],

@@ -16,12 +16,15 @@
 #include <radnamespace.hpp>
 #include <radtime.hpp>
 #include <radsound_hal.hpp>
+#include <stdio.h>
+#include <string.h>
 
 //========================================
 // Project Includes
 //========================================
 #include <sound/soundfx/soundfxgameplaylogic.h>
 
+#include <diagnostics/tvosdiagnostics.h>
 #include <sound/soundmanager.h>
 #include <sound/soundcollisiondata.h>
 #include <sound/soundfx/positionalsoundsettings.h>
@@ -68,6 +71,8 @@ static const char* s_hydrantSprayName = "hydrant_spray";
 //
 static const float POSITIONAL_COLLISION_MAX_DISTANCE_SQR = 100.0f;
 
+static const unsigned int COLLISION_SOUND_REPEAT_SUPPRESS_MS = 350;
+
 //******************************************************************************
 //
 // Public Member Functions
@@ -90,6 +95,14 @@ SoundFXGameplayLogic::SoundFXGameplayLogic() :
     m_lastRonkTime( 0 ),
     m_globalSettings( NULL )
 {
+    int i;
+    for( i = 0; i < s_numCollisionSounds; ++i )
+    {
+        m_collisionSounds[i].collObjA = NULL;
+        m_collisionSounds[i].collObjB = NULL;
+        m_collisionSounds[i].lastPlayTime = 0;
+        m_collisionSounds[i].soundName[0] = '\0';
+    }
 }
 
 //==============================================================================
@@ -438,6 +451,18 @@ void SoundFXGameplayLogic::Cleanup()
             m_positionalSounds[i].Stop();
         }
     }
+
+    for( i = 0; i < s_numCollisionSounds; i++ )
+    {
+        if( m_collisionSounds[i].soundPlayer.IsInUse() )
+        {
+            m_collisionSounds[i].soundPlayer.Stop();
+        }
+        m_collisionSounds[i].collObjA = NULL;
+        m_collisionSounds[i].collObjB = NULL;
+        m_collisionSounds[i].lastPlayTime = 0;
+        m_collisionSounds[i].soundName[0] = '\0';
+    }
 }
 
 //******************************************************************************
@@ -489,6 +514,8 @@ globalSettings* SoundFXGameplayLogic::getGlobalSettings()
 void SoundFXGameplayLogic::handleCollisionEvent( SoundCollisionData* collisionData )
 {
     int i;
+    unsigned int now = ::radTimeGetMilliseconds();
+    bool allPlayersInUse = true;
 
     //
     // FOR NOW: filter out collisions that don't involve the user's car.  Later,
@@ -507,31 +534,78 @@ void SoundFXGameplayLogic::handleCollisionEvent( SoundCollisionData* collisionDa
         return;
     }
 
+    // Evidence (session_daemon_20260812_215324): car_hit_garbage_can re-fired
+    // ~every 1.2s for 13–23s on the same prop while it bounced on ground
+    // (objectB=NULL). Comment above promised a user-car filter; enforce it so
+    // prop-vs-world contacts don't keep replaying the hit one-shot.
+    if( collisionData->collObjA != static_cast<CollisionEntityDSG*>( pVehicle ) &&
+        collisionData->collObjB != static_cast<CollisionEntityDSG*>( pVehicle ) )
+    {
+        return;
+    }
+
     //
     // See if we're already playing a sound for this collision, or if all collision
     // players are in use.  If so, exit
     //
     for( i = 0; i < s_numCollisionSounds; i++ )
     {
-        if( m_collisionSounds[i].soundPlayer.IsInUse() )
+        if( collisionPairMatches( i, collisionData->collObjA, collisionData->collObjB ) )
         {
-            if( collisionPairMatches( i, collisionData->collObjA, collisionData->collObjB ) )
+            if( m_collisionSounds[i].soundPlayer.IsInUse() )
             {
-                // Collision sound already being played, do nothing
+                // Collision sound already being played. Log stuck holds ≥2s
+                // once per second with the stored resource name (session-log
+                // capture; no xctrace required).
+                const unsigned heldMs =
+                    ( m_collisionSounds[i].lastPlayTime != 0 && now >= m_collisionSounds[i].lastPlayTime )
+                        ? ( now - m_collisionSounds[i].lastPlayTime )
+                        : 0;
+                static unsigned s_lastStuckLogMs[s_numCollisionSounds] = { 0 };
+                if( heldMs >= 2000 && ( now - s_lastStuckLogMs[i] ) >= 1000 )
+                {
+                    char phaseBuf[80];
+                    s_lastStuckLogMs[i] = now;
+                    sprintf( phaseBuf, "pair_already_playing held_ms=%u", heldMs );
+                    SRR2::Diagnostics::RecordCollisionSound(
+                        phaseBuf,
+                        m_collisionSounds[i].soundName[0] ? m_collisionSounds[i].soundName : NULL,
+                        collisionData->collObjA,
+                        collisionData->collObjB,
+                        true );
+                }
+                return;
+            }
+            if( ( m_collisionSounds[i].lastPlayTime != 0 ) &&
+                ( ( now - m_collisionSounds[i].lastPlayTime ) < COLLISION_SOUND_REPEAT_SUPPRESS_MS ) )
+            {
+                SRR2::Diagnostics::RecordCollisionSound(
+                    "repeat_cooldown",
+                    NULL,
+                    collisionData->collObjA,
+                    collisionData->collObjB,
+                    true );
                 return;
             }
         }
-        else
+
+        if( !( m_collisionSounds[i].soundPlayer.IsInUse() ) )
         {
-            break;
+            allPlayersInUse = false;
         }
     }
 
-    if( i == s_numCollisionSounds )
+    if( allPlayersInUse )
     {
         //
         // All players are being used
         //
+        SRR2::Diagnostics::RecordCollisionSound(
+            "all_players_in_use",
+            NULL,
+            collisionData->collObjA,
+            collisionData->collObjB,
+            true );
         return;
     }
 
@@ -786,7 +860,17 @@ bool SoundFXGameplayLogic::collisionPairMatches( int index, void* firstObj, void
 
     rAssert( index < s_numCollisionSounds );
 
+    if( ( firstObj == NULL ) && ( secondObj == NULL ) )
+    {
+        return false;
+    }
+
     storedPair = &(m_collisionSounds[index]);
+
+    if( ( storedPair->collObjA == NULL ) && ( storedPair->collObjB == NULL ) )
+    {
+        return false;
+    }
 
     return( ( ( storedPair->collObjA == firstObj ) &&
               ( storedPair->collObjB == secondObj ) )
@@ -846,6 +930,12 @@ void SoundFXGameplayLogic::startCollisionPlayer( const char* soundName,
     if( index >= s_numCollisionSounds )
     {
         index = 0;
+        SRR2::Diagnostics::RecordCollisionSound(
+            "steal_oldest_player",
+            soundName,
+            objA,
+            objB,
+            true );
         m_collisionSounds[0].soundPlayer.Stop();
 
         rWarningMsg( false, "Collision sound dropped for lack of players\n" );
@@ -856,6 +946,16 @@ void SoundFXGameplayLogic::startCollisionPlayer( const char* soundName,
     //
     m_collisionSounds[index].collObjA = objA;
     m_collisionSounds[index].collObjB = objB;
+    if( soundName != NULL )
+    {
+        strncpy( m_collisionSounds[index].soundName, soundName,
+                 sizeof( m_collisionSounds[index].soundName ) - 1 );
+        m_collisionSounds[index].soundName[sizeof( m_collisionSounds[index].soundName ) - 1] = '\0';
+    }
+    else
+    {
+        m_collisionSounds[index].soundName[0] = '\0';
+    }
 
     //
     // Play the sound halfway between the positions of the
@@ -912,8 +1012,34 @@ void SoundFXGameplayLogic::startCollisionPlayer( const char* soundName,
 
     m_collisionSounds[index].soundPlayer.SetPosition( average.x, average.y, average.z );
     m_collisionSounds[index].soundPlayer.SetParameters( m_collisionMinMax );
-    m_collisionSounds[index].soundPlayer.PlaySound( soundName );
-    m_collisionSounds[index].soundPlayer.SetTrim( 1.0f );
+    SRR2::Diagnostics::RecordCollisionSound(
+        "start",
+        soundName,
+        objA,
+        objB,
+        false );
+    if( m_collisionSounds[index].soundPlayer.PlaySound( soundName ) )
+    {
+        m_collisionSounds[index].soundPlayer.SetTrim( 1.0f );
+        m_collisionSounds[index].lastPlayTime = ::radTimeGetMilliseconds();
+        SRR2::Diagnostics::RecordCollisionSound(
+            "playing",
+            soundName,
+            objA,
+            objB,
+            false );
+    }
+    else
+    {
+        SRR2::Diagnostics::RecordCollisionSound(
+            "play_failed",
+            soundName,
+            objA,
+            objB,
+            true );
+        m_collisionSounds[index].collObjA = NULL;
+        m_collisionSounds[index].collObjB = NULL;
+    }
 }
 
 //=============================================================================

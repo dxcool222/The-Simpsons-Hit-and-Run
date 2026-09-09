@@ -42,6 +42,10 @@
 #include <camera/pccam.h>
 #endif
 
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_AUDIO_DIAGNOSTICS )
+#include <sound/diagnostics/audioloaddiag.hpp>
+#endif
+
 //#include <camera/firstpersoncam.h>
 
 #include <contexts/gameplay/gameplaycontext.h>
@@ -428,6 +432,14 @@ void GameplayContext::OnStop( ContextEnum nextContext )
 //=============================================================================
 void GameplayContext::OnUpdate( unsigned int elapsedTime )
 {
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_AUDIO_DIAGNOSTICS )
+    static bool s_audioDiagFirstGameplayFrame = false;
+    if ( !s_audioDiagFirstGameplayFrame )
+    {
+        s_audioDiagFirstGameplayFrame = true;
+        AudioLoadDiag::EmitLoadSummaryCheckpoint( "first_gameplay_frame" );
+    }
+#endif
 #ifdef DEBUGWATCH
     mDebugOnUpdateDT = radTimeGetMicroseconds();
 #endif

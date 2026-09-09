@@ -81,6 +81,10 @@
 #define DEFAULT_B 67;
 #endif
 
+#ifndef RAD_TVOS_ZONE_PIPELINE_LOG
+#define RAD_TVOS_ZONE_PIPELINE_LOG 0
+#endif
+
 static unsigned char gWashColourR = DEFAULT_R;
 static unsigned char gWashColourG = DEFAULT_G;
 static unsigned char gWashColourB = DEFAULT_B;
@@ -109,7 +113,7 @@ extern int gAuditAddGuts_Intersect;
 //==============================================================================
 // TIMELINE LOGGING: Surgical logging for l1z3.p3d pipeline diagnosis
 //==============================================================================
-#ifdef RAD_TVOS
+#if defined(RAD_TVOS) && RAD_TVOS_ZONE_PIPELINE_LOG
 unsigned int gTimelineFrame = 0;  // Non-static so RenderManager.cpp can access via extern
 static inline bool IsTimelineZone(const char* name) {
     if (!name) return false;
@@ -1160,7 +1164,7 @@ void WorldRenderLayer::DumpDynaLoad(tName& irGiveItAFuckinName, SwapArray<tRefCo
     //TODO: this is the ugliest, most embarrasing piece of code I've ever written.
     // re-write.
 
-#ifdef RAD_TVOS
+#if defined(RAD_TVOS) && RAD_TVOS_ZONE_PIPELINE_LOG
    // TIMELINE STAGE 5: DumpDynaLoad entry
    const char* dumpName = irGiveItAFuckinName.GetText();
    bool isTimeline = IsTimelineZone(dumpName);
@@ -1184,7 +1188,7 @@ void WorldRenderLayer::DumpDynaLoad(tName& irGiveItAFuckinName, SwapArray<tRefCo
    {
       if( mLoadLists[i]->mGiveItAFuckinName.GetUID() == irGiveItAFuckinName.GetUID() )
       {
-#ifdef RAD_TVOS
+#if defined(RAD_TVOS) && RAD_TVOS_ZONE_PIPELINE_LOG
          // TIMELINE: Log dump match found
          if (isTimeline) {
              const char* tag = GetTimelineTag(dumpName);
@@ -1600,7 +1604,7 @@ BEGIN_PROFILE( "Cleanup" );
          //mLoadLists[i]->ClearAll();
 	     //mLoadLists[i]->AllocateAll(mnLoadListRefs);
          mLoadLists[i]->ClearAllUse();
-#ifdef RAD_TVOS
+#if defined(RAD_TVOS) && RAD_TVOS_ZONE_PIPELINE_LOG
          // TIMELINE: Log before removal from mLoadLists
          if (isTimeline) {
              const char* tag = GetTimelineTag(dumpName);
@@ -1610,7 +1614,7 @@ BEGIN_PROFILE( "Cleanup" );
          }
 #endif
          mLoadLists.Remove(i);
-#ifdef RAD_TVOS
+#if defined(RAD_TVOS) && RAD_TVOS_ZONE_PIPELINE_LOG
          // TIMELINE: Log after removal
          if (isTimeline) {
              const char* tag = GetTimelineTag(dumpName);
@@ -1640,7 +1644,7 @@ END_PROFILE( "Cleanup" );
 bool WorldRenderLayer::DoPreDynaLoad(tName& irGiveItAFuckinName)//tUID iUID)
 {
    int i;
-#ifdef RAD_TVOS
+#if defined(RAD_TVOS) && RAD_TVOS_ZONE_PIPELINE_LOG
    // TIMELINE STAGE 1: DoPreDynaLoad entry
    const char* checkName = irGiveItAFuckinName.GetText();
    bool isTimeline = IsTimelineZone(checkName);
@@ -1669,7 +1673,7 @@ bool WorldRenderLayer::DoPreDynaLoad(tName& irGiveItAFuckinName)//tUID iUID)
    {
       if(mLoadLists[i]->mGiveItAFuckinName.GetUID() == irGiveItAFuckinName.GetUID() )
       {
-#ifdef RAD_TVOS
+#if defined(RAD_TVOS) && RAD_TVOS_ZONE_PIPELINE_LOG
          if (isTimeline) {
              const char* tag = GetTimelineTag(checkName);
              printf("[TL:%s] F%u STAGE1_PRE_SKIP matched_slot=%d reason='already_in_mLoadLists'\n",
@@ -1681,7 +1685,7 @@ bool WorldRenderLayer::DoPreDynaLoad(tName& irGiveItAFuckinName)//tUID iUID)
       }
    }
 
-#ifdef RAD_TVOS
+#if defined(RAD_TVOS) && RAD_TVOS_ZONE_PIPELINE_LOG
    if (isTimeline) {
        const char* tag = GetTimelineTag(checkName);
        printf("[TL:%s] F%u STAGE1_PRE_ACCEPT not_in_mLoadLists, will_add\n", tag, gTimelineFrame);
@@ -1712,7 +1716,7 @@ bool WorldRenderLayer::DoPreDynaLoad(tName& irGiveItAFuckinName)//tUID iUID)
       mLoadLists[mCurLoadIndex]->ClearAllUse();
       HeapMgr()->PopHeap(GMA_LEVEL_OTHER);
       BillboardWrappedLoader::OverrideLoader( false );
-#ifdef RAD_TVOS
+#if defined(RAD_TVOS) && RAD_TVOS_ZONE_PIPELINE_LOG
       // TIMELINE: Log after insertion with updated mLoadLists
       if (isTimeline) {
           const char* tag = GetTimelineTag(checkName);
@@ -1732,7 +1736,7 @@ bool WorldRenderLayer::DoPreDynaLoad(tName& irGiveItAFuckinName)//tUID iUID)
 
    HeapMgr()->PopHeap (GMA_LEVEL_ZONE);
 
-#ifdef RAD_TVOS
+#if defined(RAD_TVOS) && RAD_TVOS_ZONE_PIPELINE_LOG
    if (isTimeline) {
        const char* tag = GetTimelineTag(checkName);
        printf("[TL:%s] F%u STAGE1_PRE_RETURN returning_true (needs_load)\n", tag, gTimelineFrame);
@@ -1760,7 +1764,7 @@ void WorldRenderLayer::DoPostDynaLoad()
 
    p3d::ResolvePendingShaderTextures();
 
-#ifdef RAD_TVOS
+#if defined(RAD_TVOS) && RAD_TVOS_ZONE_PIPELINE_LOG
    // TIMELINE STAGE 4: DoPostDynaLoad - finalization
    // Get the zone that was just loaded from mCurLoadIndex
    const char* loadedName = (mCurLoadIndex >= 0 && mCurLoadIndex < mLoadLists.mUseSize) 
@@ -1794,12 +1798,16 @@ void WorldRenderLayer::DoPostDynaLoad()
       if(gAuditDyna) {
          rReleasePrintf("[AUDIT][QdDumpExec] start=%u numLoadLists=%d\n", mQdDeletionStart, mLoadLists.mUseSize);
       }
-#ifdef RAD_TVOS
-      if (isTimeline) {
-          const char* tag = GetTimelineTag(loadedName);
-          printf("[TL:%s] F%u STAGE4_POST_QDDUMP executing_queued_dump start=%u\n",
-              tag, gTimelineFrame, mQdDeletionStart);
-          fflush(stdout);
+#if defined(RAD_TVOS) && RAD_TVOS_ZONE_PIPELINE_LOG
+      {
+          const char* loadedName = (mCurLoadIndex >= 0 && mCurLoadIndex < mLoadLists.mUseSize)
+              ? mLoadLists[mCurLoadIndex]->mGiveItAFuckinName.GetText() : "UNKNOWN";
+          if (IsTimelineZone(loadedName)) {
+              const char* tag = GetTimelineTag(loadedName);
+              printf("[TL:%s] F%u STAGE4_POST_QDDUMP executing_queued_dump start=%u\n",
+                  tag, gTimelineFrame, mQdDeletionStart);
+              fflush(stdout);
+          }
       }
 #endif
       mQdDump = false;
@@ -1808,11 +1816,15 @@ void WorldRenderLayer::DoPostDynaLoad()
    }
    BillboardWrappedLoader::OverrideLoader( true );
 
-#ifdef RAD_TVOS
-   if (isTimeline) {
-       const char* tag = GetTimelineTag(loadedName);
-       printf("[TL:%s] F%u STAGE4_POST_COMPLETE zone_finalized\n", tag, gTimelineFrame);
-       fflush(stdout);
+#if defined(RAD_TVOS) && RAD_TVOS_ZONE_PIPELINE_LOG
+   {
+       const char* loadedName = (mCurLoadIndex >= 0 && mCurLoadIndex < mLoadLists.mUseSize)
+           ? mLoadLists[mCurLoadIndex]->mGiveItAFuckinName.GetText() : "UNKNOWN";
+       if (IsTimelineZone(loadedName)) {
+           const char* tag = GetTimelineTag(loadedName);
+           printf("[TL:%s] F%u STAGE4_POST_COMPLETE zone_finalized\n", tag, gTimelineFrame);
+           fflush(stdout);
+       }
    }
 #endif
 }

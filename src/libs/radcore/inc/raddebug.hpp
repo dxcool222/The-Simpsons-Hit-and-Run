@@ -119,6 +119,17 @@ void rDebugSetOutputHandler     ( radDebugOutputHandler * pOutputProc );
     #define rReleaseBreak(){ asm(trap); }
 #endif
 
+#if defined( RAD_TVOS )
+    #ifdef __cplusplus
+        extern "C" void SRR2_Diagnostics_DumpCrashContext( const char* reason, const char* file, int line );
+    #else
+        void SRR2_Diagnostics_DumpCrashContext( const char* reason, const char* file, int line );
+    #endif
+    #define rTvosDumpAssertContext( reason, file, line ) SRR2_Diagnostics_DumpCrashContext( reason, file, line )
+#else
+    #define rTvosDumpAssertContext( reason, file, line ) ((void)0)
+#endif
+
 //#define rReleaseString( x )( rDebugString_Implementation( x ) )
 #define rReleaseString( x )( (void)0 )
 //
@@ -126,8 +137,8 @@ void rDebugSetOutputHandler     ( radDebugOutputHandler * pOutputProc );
 //
 
 
-#define rReleaseAssert( x ) if (!(x)) if ( rDebugAssertFail_Implementation(#x,__FILE__,__LINE__) ) { rReleaseBreak(); }
-#define rReleaseAssertMsg( x, msg )  if (!(x)) if ( rDebugAssertFail_Implementation(msg,__FILE__,__LINE__) ) { rReleaseBreak(); }
+#define rReleaseAssert( x ) if (!(x)) if ( rDebugAssertFail_Implementation(#x,__FILE__,__LINE__) ) { rTvosDumpAssertContext( #x, __FILE__, __LINE__ ); rReleaseBreak(); }
+#define rReleaseAssertMsg( x, msg )  if (!(x)) if ( rDebugAssertFail_Implementation(msg,__FILE__,__LINE__) ) { rTvosDumpAssertContext( msg, __FILE__, __LINE__ ); rReleaseBreak(); }
 #define rReleaseWarning( x ) if (!(x)) rDebugWarningFail_Implementation(#x,__FILE__,__LINE__)
 #define rReleaseWarningMsg( x, msg ) if (!(x)) rDebugWarningFail_Implementation(msg,__FILE__,__LINE__)
 
@@ -140,8 +151,8 @@ void rReleasePrintf( const char *fmt, ... );
 #if defined RAD_DEBUG || defined RAD_TUNE
 
     #define rTuneString( x )(rDebugString_Implementation( x ) )
-    #define rTuneAssert( x ) if (!(x)) if ( rDebugAssertFail_Implementation(#x,__FILE__,__LINE__) ) { rReleaseBreak(); }
-    #define rTuneAssertMsg( x, msg )  if (!(x)) if ( rDebugAssertFail_Implementation(msg,__FILE__,__LINE__) ) { rReleaseBreak(); }
+    #define rTuneAssert( x ) if (!(x)) if ( rDebugAssertFail_Implementation(#x,__FILE__,__LINE__) ) { rTvosDumpAssertContext( #x, __FILE__, __LINE__ ); rReleaseBreak(); }
+    #define rTuneAssertMsg( x, msg )  if (!(x)) if ( rDebugAssertFail_Implementation(msg,__FILE__,__LINE__) ) { rTvosDumpAssertContext( msg, __FILE__, __LINE__ ); rReleaseBreak(); }
     #define rTuneWarning( x ) if (!(x)) rDebugWarningFail_Implementation(#x,__FILE__,__LINE__)
     #define rTuneWarningMsg( x, msg ) if (!(x)) rDebugWarningFail_Implementation(msg,__FILE__,__LINE__)
 
@@ -195,8 +206,8 @@ void rReleasePrintf( const char *fmt, ... );
 
     #define rDebugHaltOnAsserts( x ) rDebugHaltOnAsserts_Implementation( x )
 
-    #define rAssert( x ) if (!(x)) if ( rDebugAssertFail_Implementation(#x,__FILE__,__LINE__) ) { rReleaseBreak(); }
-	#define rAssertMsg( x, msg )  if (!(x)) if ( rDebugAssertFail_Implementation(msg,__FILE__,__LINE__) ) { rReleaseBreak(); }
+    #define rAssert( x ) if (!(x)) if ( rDebugAssertFail_Implementation(#x,__FILE__,__LINE__) ) { rTvosDumpAssertContext( #x, __FILE__, __LINE__ ); rReleaseBreak(); }
+	#define rAssertMsg( x, msg )  if (!(x)) if ( rDebugAssertFail_Implementation(msg,__FILE__,__LINE__) ) { rTvosDumpAssertContext( msg, __FILE__, __LINE__ ); rReleaseBreak(); }
     
     void rDebugPrintf( const char *fmt, ... );
 

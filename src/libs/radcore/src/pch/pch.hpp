@@ -46,4 +46,17 @@
 
 #endif // defined RAD_WIN32 || defined RAD_XBOX
 
+#ifndef TVOS_AUDIO_DIAG
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_AUDIO_DIAGNOSTICS )
+    #if __has_include(<SDL2/SDL.h>)
+        #include <SDL2/SDL.h>
+    #else
+        #include <SDL.h>
+    #endif
+    #define TVOS_AUDIO_DIAG(...) SDL_Log(__VA_ARGS__)
+#else
+    #define TVOS_AUDIO_DIAG(...) ((void)0)
+#endif
+#endif
+
 #endif // RADCORE_PCH_HPP

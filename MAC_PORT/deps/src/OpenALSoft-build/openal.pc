@@ -1,0 +1,12 @@
+prefix=/Volumes/Untitled2/MAC/New project/The-Simpsons-Hit-and-Run-Version-3/MAC_PORT/deps/prefix
+exec_prefix=${prefix}
+libdir=/Volumes/Untitled2/MAC/New project/The-Simpsons-Hit-and-Run-Version-3/MAC_PORT/deps/prefix/lib
+includedir=/Volumes/Untitled2/MAC/New project/The-Simpsons-Hit-and-Run-Version-3/MAC_PORT/deps/prefix/include
+
+Name: OpenAL
+Description: OpenAL is a cross-platform 3D audio API
+Requires: 
+Version: 1.24.3
+Libs: -L${libdir} -lopenal 
+Libs.private: -pthread -Wl,-framework,AudioToolbox -Wl,-framework,AudioUnit,-framework,ApplicationServices -Wl,-framework,CoreAudio -ldl -lm
+Cflags: -I${includedir} -I${includedir}/AL -DAL_LIBTYPE_STATIC

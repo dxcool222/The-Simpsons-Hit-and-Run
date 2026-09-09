@@ -25,6 +25,13 @@
 
 #include <loading/soundfilehandler.h>
 #include <memory/srrmemory.h>
+#include <stdio.h>
+
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_AUDIO_DIAGNOSTICS )
+#include <string.h>
+#include <sound/diagnostics/audioloaddiag.hpp>
+#include <sound/soundloader.h>
+#endif
 
 
 //******************************************************************************
@@ -55,7 +62,8 @@ SoundCluster::SoundCluster( int clusterIndex,
                             IRadNameSpace* soundNamespace ) :
     m_isLoaded( false ),
     m_namespace( soundNamespace ),
-    m_loadCompleteCallbackObj( NULL )
+    m_loadCompleteCallbackObj( NULL ),
+    m_clusterIndex( clusterIndex )
 {
     int i;
     
@@ -66,10 +74,6 @@ SoundCluster::SoundCluster( int clusterIndex,
     {
         m_soundList[i] = NULL_SOUND_KEY;
     }
-
-#ifdef RAD_DEBUG
-    m_clusterIndex = clusterIndex;
-#endif
 }
 
 //==============================================================================
@@ -212,6 +216,11 @@ bool SoundCluster::AddResource( Sound::daResourceKey resourceKey )
 
     for( i = 0; i < MAX_RESOURCES; i++ )
     {
+        if( m_soundList[i] == resourceKey )
+        {
+            return( true );
+        }
+
         if( m_soundList[i] == NULL_SOUND_KEY )
         {
             m_soundList[i] = resourceKey;
@@ -264,6 +273,32 @@ bool SoundCluster::ContainsResource( Sound::daResourceKey resourceKey )
 void SoundCluster::OnDynaLoadOperationsComplete( void* pUserData )
 {
     m_isLoaded = true;
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_AUDIO_DIAGNOSTICS )
+    {
+        char checkpoint[ 96 ];
+        const char* scriptName = SoundLoader_GetClusterScriptNameForDiagnostics(
+            static_cast< SoundClusterName >( m_clusterIndex ) );
+        const char* sn = scriptName != NULL ? scriptName : "unknown";
+        if ( strcmp( sn, "permanent" ) == 0 )
+        {
+            strncpy( checkpoint, "permanent_cluster_done", sizeof( checkpoint ) );
+        }
+        else if ( strcmp( sn, "frontend" ) == 0 )
+        {
+            strncpy( checkpoint, "frontend_cluster_done", sizeof( checkpoint ) );
+        }
+        else
+        {
+            snprintf(
+                checkpoint,
+                sizeof( checkpoint ),
+                "cluster_done_%s",
+                sn );
+        }
+        checkpoint[ sizeof( checkpoint ) - 1 ] = '\0';
+        AudioLoadDiag::EmitLoadSummaryCheckpoint( checkpoint );
+    }
+#endif
     if( m_loadCompleteCallbackObj != NULL )
     {
         m_loadCompleteCallbackObj->LoadCompleted();

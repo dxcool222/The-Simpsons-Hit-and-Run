@@ -100,10 +100,17 @@ void LoadMemP3DFile( unsigned char* buffer, unsigned int size, tEntityStore* sto
     file->Release();
 }
 
-static void LogOutputFunction( void* /*userdata*/, int /*category*/, SDL_LogPriority /*priority*/, const char* message )
+static void LogOutputFunction( void* /*userdata*/, int /*category*/, SDL_LogPriority priority, const char* message )
 {
+#if defined( RAD_TVOS_PERF_DIAGNOSTICS ) || defined( RAD_TVOS_RENDER_DIAGNOSTICS ) || defined( RAD_TVOS_STORAGE_DIAGNOSTICS ) || defined( RAD_TVOS_AUDIO_DIAGNOSTICS )
     printf( "%s\n", message );
     fflush( stdout );
+#else
+    if ( priority >= SDL_LOG_PRIORITY_WARN && message != NULL )
+    {
+        fprintf( stderr, "%s\n", message );
+    }
+#endif
 }
 
 TvosPlatform* TvosPlatform::CreateInstance()
@@ -129,6 +136,18 @@ void TvosPlatform::DestroyInstance()
 
 bool TvosPlatform::InitializeWindow()
 {
+#if defined(RAD_MACOS)
+    // macOS has no OpenGLES.framework — use OpenGL 2.1 compatibility and GLES shims.
+    SDL_GL_SetAttribute( SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_COMPATIBILITY );
+    SDL_GL_SetAttribute( SDL_GL_CONTEXT_MAJOR_VERSION, 2 );
+    SDL_GL_SetAttribute( SDL_GL_CONTEXT_MINOR_VERSION, 1 );
+    SDL_GL_SetAttribute( SDL_GL_DEPTH_SIZE, 24 );
+    SDL_GL_SetAttribute( SDL_GL_STENCIL_SIZE, 0 );
+    SDL_GL_SetAttribute( SDL_GL_DOUBLEBUFFER, SDL_TRUE );
+
+    int flags = SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI;
+    mWnd = SDL_CreateWindow( ApplicationName, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 1280, 720, flags );
+#else
     SDL_GL_SetAttribute( SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES );
     SDL_GL_SetAttribute( SDL_GL_CONTEXT_MAJOR_VERSION, 2 );
     SDL_GL_SetAttribute( SDL_GL_CONTEXT_MINOR_VERSION, 0 );
@@ -137,8 +156,8 @@ bool TvosPlatform::InitializeWindow()
     SDL_GL_SetAttribute( SDL_GL_DOUBLEBUFFER, SDL_TRUE );
 
     int flags = SDL_WINDOW_OPENGL | SDL_WINDOW_FULLSCREEN;
-
     mWnd = SDL_CreateWindow( ApplicationName, 0, 0, 1920, 1080, flags );
+#endif
     rAssert( mWnd != NULL );
 
     {
@@ -150,7 +169,9 @@ bool TvosPlatform::InitializeWindow()
         int drawableH = 0;
         SDL_GL_GetDrawableSize( mWnd, &drawableW, &drawableH );
 
+#if defined( RAD_TVOS_RENDER_DIAGNOSTICS )
         SDL_Log( "TVOS_GL Window created: wnd=%p window=%dx%d drawable=%dx%d", mWnd, winW, winH, drawableW, drawableH );
+#endif
     }
 
     SDL_LogSetOutputFunction( LogOutputFunction, NULL );

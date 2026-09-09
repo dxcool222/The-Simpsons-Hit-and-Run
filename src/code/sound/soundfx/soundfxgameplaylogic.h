@@ -44,6 +44,8 @@ struct PositionalSFXPlayer
     PositionalSoundPlayer soundPlayer;
     void* collObjA;
     void* collObjB;
+    unsigned int lastPlayTime;
+    char soundName[64];
 };
 
 //=============================================================================
@@ -127,4 +129,3 @@ class SoundFXGameplayLogic : public SoundFXLogic
 
 
 #endif // SOUNDFXGAMEPLAYLOGIC_H
-

@@ -472,12 +472,12 @@ void InputManager::EnumerateControllers( void )
 #endif
 
 #ifndef RAD_PC
-#ifdef RAD_TVOS
+#if defined(RAD_TVOS) && defined(RAD_TVOS_INPUT_DIAGNOSTICS)
             printf( "[InputManager] EnumerateControllers: GetControllerAtLocation('%s')\n", szLocation );
             fflush( stdout );
 #endif
             xIC2 = mxIControllerSystem2->GetControllerAtLocation( szLocation );
-#ifdef RAD_TVOS
+#if defined(RAD_TVOS) && defined(RAD_TVOS_INPUT_DIAGNOSTICS)
             if ( xIC2 != NULL )
             {
                 printf( "[InputManager]   Found controller: type='%s' class='%s' loc='%s' connected=%d\n",
@@ -528,7 +528,7 @@ void InputManager::EnumerateControllers( void )
 #else
             if ( xIC2 == NULL || !xIC2->IsConnected( ) )
             {
-#ifdef RAD_TVOS
+#if defined(RAD_TVOS) && defined(RAD_TVOS_INPUT_DIAGNOSTICS)
                 printf( "[InputManager]   Controller at '%s' is NOT connected\n", szLocation );
                 fflush( stdout );
 #endif
@@ -560,7 +560,7 @@ void InputManager::EnumerateControllers( void )
                 controller->LoadControllerMappings( );
                 controller->SetRumble( IsRumbleEnabled() );
 
-#ifdef RAD_TVOS
+#if defined(RAD_TVOS) && defined(RAD_TVOS_INPUT_DIAGNOSTICS)
                 printf( "[InputManager]   Initialized+connected UserController index=%u for '%s'\n", i, szLocation );
                 fflush( stdout );
 #endif
@@ -682,7 +682,7 @@ void InputManager::SetGameState( Input::ActiveState state )
     // to the DEACTIVE_ANIM_CAM state, which actually sends you to active all.
     // Perhaps the input system should really be a stack?
     //
-#if defined(RAD_TVOS)
+#if defined(RAD_TVOS) && defined(RAD_TVOS_INPUT_DIAGNOSTICS)
     const char* oldStateName = "?";
     const char* newStateName = "?";
     switch( mGameState )
@@ -784,4 +784,3 @@ void InputManager::StopRumbleEffects()
 }
 
 #endif
-

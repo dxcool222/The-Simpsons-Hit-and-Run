@@ -14,15 +14,25 @@
 #include "system.hpp"
 #include "radinprogext.h"
 
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_AUDIO_DIAGNOSTICS )
+#include <radtime.hpp>
+#include <sound/diagnostics/audioloaddiag_bridge.hpp>
+#include <cstdint>
+#endif
+
 #ifdef RAD_TVOS
+#include <limits.h>
+#include <stdint.h>
+#include <vector>
+#endif
+
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_AUDIO_DIAGNOSTICS )
 #if __has_include(<SDL2/SDL.h>)
     #include <SDL2/SDL.h>
 #else
     #include <SDL.h>
 #endif
 
-// Audio diagnostic counters
-static unsigned int s_audioBufferCount = 0;
 static unsigned int s_alBufferDataCallCount = 0;
 
 // Helper to log ALL alBufferData calls and catch any mono uploads
@@ -40,19 +50,19 @@ static inline void tvOS_alBufferData_Logged(ALuint buffer, ALenum format, const 
     
     // ALWAYS log mono uploads - these are bugs on tvOS!
     if (isMono) {
-        SDL_Log("[MONO_UPLOAD_BUG!] #%u %s: buffer=%u format=%s size=%d freq=%d - THIS SHOULD NOT HAPPEN!",
+        TVOS_AUDIO_DIAG("[MONO_UPLOAD_BUG!] #%u %s: buffer=%u format=%s size=%d freq=%d - THIS SHOULD NOT HAPPEN!",
                 s_alBufferDataCallCount, caller, buffer, formatStr, size, freq);
     }
     // Log first 10 stereo uploads for verification
     else if (s_alBufferDataCallCount <= 10) {
-        SDL_Log("[AL_UPLOAD] #%u %s: buffer=%u format=%s size=%d freq=%d",
+        TVOS_AUDIO_DIAG("[AL_UPLOAD] #%u %s: buffer=%u format=%s size=%d freq=%d",
                 s_alBufferDataCallCount, caller, buffer, formatStr, size, freq);
     }
     
     // Also log first 4 samples if 16-bit to verify PCM data sanity
     if (s_alBufferDataCallCount <= 5 && size >= 8 && data != NULL) {
         const int16_t* samples = (const int16_t*)data;
-        SDL_Log("[PCM_VERIFY] #%u samples=[%d,%d,%d,%d] (expect small values near zero for silence, or typical audio range)",
+        TVOS_AUDIO_DIAG("[PCM_VERIFY] #%u samples=[%d,%d,%d,%d] (expect small values near zero for silence, or typical audio range)",
                 s_alBufferDataCallCount, samples[0], samples[1], samples[2], samples[3]);
     }
     
@@ -62,6 +72,55 @@ static inline void tvOS_alBufferData_Logged(ALuint buffer, ALenum format, const 
 #define TVOS_AL_BUFFER_DATA(buf, fmt, data, size, freq, caller) tvOS_alBufferData_Logged(buf, fmt, data, size, freq, caller)
 #else
 #define TVOS_AL_BUFFER_DATA(buf, fmt, data, size, freq, caller) alBufferData(buf, fmt, data, size, freq)
+#endif
+
+#ifdef RAD_TVOS
+static const void* TvosBuildStereo8Scratch( const void* monoData, unsigned int monoFrames, unsigned int* stereoBytes )
+{
+    if ( monoData == NULL || stereoBytes == NULL || monoFrames > ( UINT_MAX / 2 ) )
+    {
+        return NULL;
+    }
+
+    static thread_local std::vector<uint8_t> s_stereo8Scratch;
+    const unsigned int bytes = monoFrames * 2;
+    s_stereo8Scratch.resize( bytes );
+
+    const uint8_t* mono = static_cast<const uint8_t*>( monoData );
+    uint8_t* stereo = s_stereo8Scratch.data();
+    for ( unsigned int i = 0; i < monoFrames; ++i )
+    {
+        const uint8_t sample = mono[ i ];
+        stereo[ i * 2 + 0 ] = sample;
+        stereo[ i * 2 + 1 ] = sample;
+    }
+
+    *stereoBytes = bytes;
+    return stereo;
+}
+
+static const void* TvosBuildStereo16Scratch( const void* monoData, unsigned int monoFrames, unsigned int* stereoBytes )
+{
+    if ( monoData == NULL || stereoBytes == NULL || monoFrames > ( UINT_MAX / 4 ) )
+    {
+        return NULL;
+    }
+
+    static thread_local std::vector<int16_t> s_stereo16Scratch;
+    s_stereo16Scratch.resize( monoFrames * 2 );
+
+    const int16_t* mono = static_cast<const int16_t*>( monoData );
+    int16_t* stereo = s_stereo16Scratch.data();
+    for ( unsigned int i = 0; i < monoFrames; ++i )
+    {
+        const int16_t sample = mono[ i ];
+        stereo[ i * 2 + 0 ] = sample;
+        stereo[ i * 2 + 1 ] = sample;
+    }
+
+    *stereoBytes = monoFrames * 4;
+    return stereo;
+}
 #endif
 
 const unsigned int RADSOUNDHAL_BUFFER_CHANNEL_ALIGNMENT = 1;
@@ -113,6 +172,8 @@ radSoundHalBufferWin::radSoundHalBufferWin(	void )
     m_UseBufferQueuing( false ),
     m_LastDataSourcePtr( NULL ),
     m_QueuedCount( 0 ),
+    m_ProcessedFrames( 0 ),
+    m_QueuePlaybackRequested( false ),
 #endif
     m_Buffer( 0 ),
     m_refIRadSoundHalAudioFormat( NULL ),
@@ -124,6 +185,7 @@ radSoundHalBufferWin::radSoundHalBufferWin(	void )
     for (unsigned int i = 0; i < kStreamBufferPoolSize; i++) {
         m_StreamBufferPool[i] = 0;
         m_StreamBufferFree[i] = true;
+        m_StreamBufferFrames[i] = 0;
     }
 #endif
 }
@@ -176,13 +238,14 @@ void radSoundHalBufferWin::Initialize
             alGenBuffers(kStreamBufferPoolSize, m_StreamBufferPool);
             ALenum genErr = alGetError();
             if (genErr != AL_NO_ERROR) {
-                SDL_Log("[QUEUE_INIT] ERROR: alGenBuffers failed err=0x%x", genErr);
+                TVOS_AUDIO_DIAG("[QUEUE_INIT] ERROR: alGenBuffers failed err=0x%x", genErr);
                 m_UseBufferQueuing = false;
             } else {
                 for (unsigned int i = 0; i < kStreamBufferPoolSize; i++) {
                     m_StreamBufferFree[i] = true;
+                    m_StreamBufferFrames[i] = 0;
                 }
-                SDL_Log("[QUEUE_INIT] Created buffer pool: [%u,%u,%u,%u] for mono streaming",
+                TVOS_AUDIO_DIAG("[QUEUE_INIT] Created buffer pool: [%u,%u,%u,%u] for mono streaming",
                         m_StreamBufferPool[0], m_StreamBufferPool[1], 
                         m_StreamBufferPool[2], m_StreamBufferPool[3]);
             }
@@ -194,13 +257,14 @@ void radSoundHalBufferWin::Initialize
             alGenBuffers(kStreamBufferPoolSize, m_StreamBufferPool);
             ALenum genErr = alGetError();
             if (genErr != AL_NO_ERROR) {
-                SDL_Log("[QUEUE_INIT] ERROR: alGenBuffers failed err=0x%x", genErr);
+                TVOS_AUDIO_DIAG("[QUEUE_INIT] ERROR: alGenBuffers failed err=0x%x", genErr);
                 m_UseBufferQueuing = false;
             } else {
                 for (unsigned int i = 0; i < kStreamBufferPoolSize; i++) {
                     m_StreamBufferFree[i] = true;
+                    m_StreamBufferFrames[i] = 0;
                 }
-                SDL_Log("[QUEUE_INIT] Created buffer pool: [%u,%u,%u,%u] for stereo streaming",
+                TVOS_AUDIO_DIAG("[QUEUE_INIT] Created buffer pool: [%u,%u,%u,%u] for stereo streaming",
                         m_StreamBufferPool[0], m_StreamBufferPool[1],
                         m_StreamBufferPool[2], m_StreamBufferPool[3]);
             }
@@ -211,11 +275,12 @@ void radSoundHalBufferWin::Initialize
         unsigned int useSize = pIRadMemoryObject->GetMemorySize();
         bool useMapBuffer = !m_ForcedStereo && !m_UseBufferQueuing;  // Only use map_buffer for stereo streams
         
+#if defined( RAD_TVOS_AUDIO_DIAGNOSTICS )
         static unsigned int s_streamBufInitCount = 0;
         s_streamBufInitCount++;
         if (s_streamBufInitCount <= 5) {
-            SDL_Log("[STREAM_BUF] #%u: ch=%u bits=%u size=%u rate=%u forcedStereo=%d useQueue=%d",
-                    s_streamBufInitCount, 
+            TVOS_AUDIO_DIAG("[STREAM_BUF] #%u: ch=%u bits=%u size=%u rate=%u forcedStereo=%d useQueue=%d",
+                    s_streamBufInitCount,
                     m_refIRadSoundHalAudioFormat->GetNumberOfChannels(),
                     m_refIRadSoundHalAudioFormat->GetBitResolution(),
                     useSize,
@@ -223,6 +288,7 @@ void radSoundHalBufferWin::Initialize
                     m_ForcedStereo ? 1 : 0,
                     m_UseBufferQueuing ? 1 : 0);
         }
+#endif
 #endif
 
         // AL_SOFTX_map_buffer extension may not be available on tvOS
@@ -239,7 +305,7 @@ void radSoundHalBufferWin::Initialize
                 );
                 ALenum storageErr = alGetError();
                 if (storageErr != AL_NO_ERROR) {
-                    SDL_Log("[BUF_STORAGE] ERROR: buffer=%u err=0x%x format=0x%x size=%u", 
+                    TVOS_AUDIO_DIAG("[BUF_STORAGE] ERROR: buffer=%u err=0x%x format=0x%x size=%u", 
                             m_Buffer, storageErr, useFormat, useSize);
                 }
             }
@@ -437,11 +503,10 @@ void radSoundHalBufferWin::LoadAsync
     }
 #endif
 
-#ifdef RAD_TVOS
-    // ALWAYS LOG ENTRY for mono streaming - this fires UNCONDITIONALLY
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_AUDIO_DIAGNOSTICS )
     unsigned int channels = m_refIRadSoundHalAudioFormat->GetNumberOfChannels();
     if (channels == 1 && m_Streaming) {
-        SDL_Log("[MONO_LOAD] ENTRY buffer=%u streaming=%d mapExt=%p frames=%u startFrame=%u",
+        TVOS_AUDIO_DIAG("[MONO_LOAD] ENTRY buffer=%u streaming=%d mapExt=%p frames=%u startFrame=%u",
                 m_Buffer, m_Streaming ? 1 : 0, (void*)radMapBufferSOFT, 
                 numberOfFrames, bufferStartInFrames);
     }
@@ -459,7 +524,7 @@ void radSoundHalBufferWin::LoadAsync
         if (m_ForcedStereo) {
             // Use memory object as intermediate buffer - mono data goes here first
             m_pLockedLoadBuffer = static_cast<char*>(m_refIRadMemoryObject->GetMemoryAddress()) + m_LoadStartInBytes;
-            SDL_Log("[MONO_FIX] Using memobj for mono data ptr=%p bytes=%u (will convert+alBufferData)",
+            TVOS_AUDIO_DIAG("[MONO_FIX] Using memobj for mono data ptr=%p bytes=%lu (will convert+alBufferData)",
                     m_pLockedLoadBuffer, m_LockedLoadBytes);
         }
         else {
@@ -523,71 +588,49 @@ void radSoundHalBufferWin::OnBufferLoadComplete( unsigned int dataSourceFrames )
 #endif
 
 #ifdef RAD_TVOS
-    if ( m_Streaming && m_UseBufferQueuing && m_AttachedSource != 0 && m_pLockedLoadBuffer != NULL && dataSourceFrames > 0 )
+    if ( m_Streaming && m_UseBufferQueuing && m_AttachedSource != 0 && m_pLockedLoadBuffer != NULL && m_LockedLoadBytes > 0 )
     {
         ALuint source = m_AttachedSource;
+        const unsigned int framesToQueue = m_refIRadSoundHalAudioFormat->BytesToFrames( m_LockedLoadBytes );
 
         UnqueueProcessedBuffers();
 
         ALuint queueBuf = GetFreeStreamBuffer();
-        if (queueBuf == 0) {
-            SDL_Log("[QUEUE_UNDERRUN] No free buffers! Forcing unqueue...");
-            ALuint forcedBuf = 0;
-            alSourceUnqueueBuffers(source, 1, &forcedBuf);
-            if (alGetError() == AL_NO_ERROR && forcedBuf != 0) {
-                ReturnStreamBuffer(forcedBuf);
-                queueBuf = GetFreeStreamBuffer();
-            }
-        }
 
         if (queueBuf != 0) {
             if (m_ForcedStereo) {
                 const unsigned int bits = m_refIRadSoundHalAudioFormat->GetBitResolution();
                 if (bits == 8) {
-                    unsigned int stereoBytes = dataSourceFrames * 2;
-                    uint8_t* monoData = (uint8_t*)m_pLockedLoadBuffer;
-                    uint8_t* stereoData = (uint8_t*)radMemoryAlloc(GetThisAllocator(), stereoBytes);
+                    unsigned int stereoBytes = 0;
+                    const void* stereoData = TvosBuildStereo8Scratch( m_pLockedLoadBuffer, framesToQueue, &stereoBytes );
                     if (stereoData != NULL) {
-                        for (unsigned int i = 0; i < dataSourceFrames; i++) {
-                            uint8_t sample = monoData[i];
-                            stereoData[i * 2 + 0] = sample;
-                            stereoData[i * 2 + 1] = sample;
-                        }
                         alBufferData(queueBuf, AL_FORMAT_STEREO8, stereoData, stereoBytes,
                                      m_refIRadSoundHalAudioFormat->GetSampleRate());
                         ALenum bufErr = alGetError();
-                        radMemoryFree(stereoData);
                         if (bufErr != AL_NO_ERROR) {
-                            SDL_Log("[QUEUE_ERR] alBufferData failed: err=0x%x buf=%u bytes=%u", bufErr, queueBuf, stereoBytes);
+                            TVOS_AUDIO_DIAG("[QUEUE_ERR] alBufferData failed: err=0x%x buf=%u bytes=%u", bufErr, queueBuf, stereoBytes);
                             ReturnStreamBuffer(queueBuf);
                             queueBuf = 0;
                         }
                     } else {
-                        SDL_Log("[QUEUE_ERR] ALLOC FAILED! stereoBytes=%u", stereoBytes);
+                        TVOS_AUDIO_DIAG("[QUEUE_ERR] stereo scratch failed frames=%u", framesToQueue);
                         ReturnStreamBuffer(queueBuf);
                         queueBuf = 0;
                     }
                 } else {
-                    unsigned int stereoBytes = dataSourceFrames * 4;
-                    int16_t* monoData = (int16_t*)m_pLockedLoadBuffer;
-                    int16_t* stereoData = (int16_t*)radMemoryAlloc(GetThisAllocator(), stereoBytes);
+                    unsigned int stereoBytes = 0;
+                    const void* stereoData = TvosBuildStereo16Scratch( m_pLockedLoadBuffer, framesToQueue, &stereoBytes );
                     if (stereoData != NULL) {
-                        for (unsigned int i = 0; i < dataSourceFrames; i++) {
-                            int16_t sample = monoData[i];
-                            stereoData[i * 2 + 0] = sample;
-                            stereoData[i * 2 + 1] = sample;
-                        }
                         alBufferData(queueBuf, AL_FORMAT_STEREO16, stereoData, stereoBytes,
                                      m_refIRadSoundHalAudioFormat->GetSampleRate());
                         ALenum bufErr = alGetError();
-                        radMemoryFree(stereoData);
                         if (bufErr != AL_NO_ERROR) {
-                            SDL_Log("[QUEUE_ERR] alBufferData failed: err=0x%x buf=%u bytes=%u", bufErr, queueBuf, stereoBytes);
+                            TVOS_AUDIO_DIAG("[QUEUE_ERR] alBufferData failed: err=0x%x buf=%u bytes=%u", bufErr, queueBuf, stereoBytes);
                             ReturnStreamBuffer(queueBuf);
                             queueBuf = 0;
                         }
                     } else {
-                        SDL_Log("[QUEUE_ERR] ALLOC FAILED! stereoBytes=%u", stereoBytes);
+                        TVOS_AUDIO_DIAG("[QUEUE_ERR] stereo scratch failed frames=%u", framesToQueue);
                         ReturnStreamBuffer(queueBuf);
                         queueBuf = 0;
                     }
@@ -597,7 +640,7 @@ void radSoundHalBufferWin::OnBufferLoadComplete( unsigned int dataSourceFrames )
                              m_refIRadSoundHalAudioFormat->GetSampleRate());
                 ALenum bufErr = alGetError();
                 if (bufErr != AL_NO_ERROR) {
-                    SDL_Log("[QUEUE_ERR] alBufferData failed: err=0x%x buf=%u bytes=%lu", bufErr, queueBuf, (unsigned long)m_LockedLoadBytes);
+                    TVOS_AUDIO_DIAG("[QUEUE_ERR] alBufferData failed: err=0x%x buf=%u bytes=%lu", bufErr, queueBuf, (unsigned long)m_LockedLoadBytes);
                     ReturnStreamBuffer(queueBuf);
                     queueBuf = 0;
                 }
@@ -609,18 +652,17 @@ void radSoundHalBufferWin::OnBufferLoadComplete( unsigned int dataSourceFrames )
             ALenum queueErr = alGetError();
             if (queueErr == AL_NO_ERROR) {
                 m_QueuedCount++;
+                MarkStreamBufferQueued(queueBuf, framesToQueue);
                 ALint sourceState = 0;
                 alGetSourcei(source, AL_SOURCE_STATE, &sourceState);
-                if (sourceState != AL_PLAYING && m_QueuedCount > 0) {
+                if (sourceState != AL_PLAYING && m_QueuedCount > 0 && m_QueuePlaybackRequested) {
                     alSourcePlay(source);
                     alGetError();
                 }
             } else {
-                SDL_Log("[QUEUE_ERR] alSourceQueueBuffers failed: err=0x%x buf=%u source=%u", queueErr, queueBuf, source);
+                TVOS_AUDIO_DIAG("[QUEUE_ERR] alSourceQueueBuffers failed: err=0x%x buf=%u source=%u", queueErr, queueBuf, source);
                 ReturnStreamBuffer(queueBuf);
             }
-        } else {
-            SDL_Log("[QUEUE_ERR] No buffer available even after force unqueue!");
         }
 
         m_pLockedLoadBuffer = NULL;
@@ -646,40 +688,49 @@ void radSoundHalBufferWin::OnBufferLoadComplete( unsigned int dataSourceFrames )
         
         if (channels == 1 && bits == 16 && m_LockedLoadBytes > 0) {
             // ENTRY LOG - proves this TU is compiled and path is hit
-            SDL_Log("[CLIP_FIX] ENTER mono->stereo clip path buffer=%u bytes=%u", m_Buffer, m_LockedLoadBytes);
+            TVOS_AUDIO_DIAG("[CLIP_FIX] ENTER mono->stereo clip path buffer=%u bytes=%lu", m_Buffer, m_LockedLoadBytes);
             
             // Mono 16-bit clip - must convert to stereo
-            int16_t* monoData = (int16_t*)m_pLockedLoadBuffer;
             unsigned int monoFrames = m_LockedLoadBytes / 2;  // 2 bytes per mono sample
-            unsigned int stereoBytes = monoFrames * 4;  // 2 channels * 2 bytes
+            unsigned int stereoBytes = 0;
             
-            int16_t* stereoData = (int16_t*)radMemoryAlloc(GetThisAllocator(), stereoBytes);
+            radTime64 tStereo0 = radTimeGetMicroseconds64( );
+            const void* stereoData = TvosBuildStereo16Scratch( m_pLockedLoadBuffer, monoFrames, &stereoBytes );
+            radTime64 tStereo1 = radTimeGetMicroseconds64( );
             if (stereoData != NULL) {
-                // Convert mono to stereo
-                for (unsigned int i = 0; i < monoFrames; i++) {
-                    int16_t sample = monoData[i];
-                    stereoData[i * 2 + 0] = sample;  // Left
-                    stereoData[i * 2 + 1] = sample;  // Right
-                }
-                
                 static unsigned int s_clipFixCount = 0;
                 s_clipFixCount++;
                 if (s_clipFixCount <= 5) {
-                    SDL_Log("[CLIP_FIX] #%u mono clip -> stereo: frames=%u monoBytes=%u stereoBytes=%u",
+                    TVOS_AUDIO_DIAG("[CLIP_FIX] #%u mono clip -> stereo: frames=%u monoBytes=%lu stereoBytes=%u",
                             s_clipFixCount, monoFrames, m_LockedLoadBytes, stereoBytes);
                 }
                 
+                radTime64 tAl0 = radTimeGetMicroseconds64( );
                 // Upload as stereo
                 TVOS_AL_BUFFER_DATA(m_Buffer, AL_FORMAT_STEREO16, stereoData, stereoBytes,
                              m_refIRadSoundHalAudioFormat->GetSampleRate(), "CLIP_STEREO16");
+                radTime64 tAl1 = radTimeGetMicroseconds64( );
+                {
+                    const uint64_t stereoUs = static_cast<uint64_t>( tStereo1 - tStereo0 );
+                    const uint64_t alUs = static_cast<uint64_t>( tAl1 - tAl0 );
+                    SRR2_AudioDiag_RecordStereoUs( stereoUs );
+                    SRR2_AudioDiag_RecordAlUs( alUs );
+                    if ( s_clipFixCount <= 30 || ( s_clipFixCount % 50 ) == 0 )
+                    {
+                        TVOS_AUDIO_DIAG(
+                            "[AUDIO_TIMING] kind=clip_mono16 buffer=%u stereo_us=%llu al_us=%llu frames=%u",
+                            m_Buffer,
+                            static_cast<unsigned long long>( stereoUs ),
+                            static_cast<unsigned long long>( alUs ),
+                            monoFrames );
+                    }
+                }
                 ALenum err = alGetError();
                 if (err != AL_NO_ERROR) {
-                    SDL_Log("[CLIP_FIX] ERROR: alBufferData failed! buffer=%u err=0x%x", m_Buffer, err);
+                    TVOS_AUDIO_DIAG("[CLIP_FIX] ERROR: alBufferData failed! buffer=%u err=0x%x", m_Buffer, err);
                 }
-                
-                radMemoryFree(stereoData);
             } else {
-                SDL_Log("[CLIP_FIX] ALLOC FAILED! stereoBytes=%u", stereoBytes);
+                TVOS_AUDIO_DIAG("[CLIP_FIX] stereo scratch failed frames=%u", monoFrames);
                 // Fallback to mono (will have static but won't crash)
                 TVOS_AL_BUFFER_DATA(m_Buffer, format, m_pLockedLoadBuffer, m_LockedLoadBytes,
                              m_refIRadSoundHalAudioFormat->GetSampleRate(), "CLIP_FALLBACK");
@@ -687,19 +738,13 @@ void radSoundHalBufferWin::OnBufferLoadComplete( unsigned int dataSourceFrames )
         }
         else if (channels == 1 && bits == 8 && m_LockedLoadBytes > 0) {
             // Mono 8-bit clip - convert to stereo 8-bit
-            uint8_t* monoData = (uint8_t*)m_pLockedLoadBuffer;
             unsigned int monoFrames = m_LockedLoadBytes;
-            unsigned int stereoBytes = monoFrames * 2;
+            unsigned int stereoBytes = 0;
             
-            uint8_t* stereoData = (uint8_t*)radMemoryAlloc(GetThisAllocator(), stereoBytes);
+            const void* stereoData = TvosBuildStereo8Scratch( m_pLockedLoadBuffer, monoFrames, &stereoBytes );
             if (stereoData != NULL) {
-                for (unsigned int i = 0; i < monoFrames; i++) {
-                    stereoData[i * 2 + 0] = monoData[i];
-                    stereoData[i * 2 + 1] = monoData[i];
-                }
                 TVOS_AL_BUFFER_DATA(m_Buffer, AL_FORMAT_STEREO8, stereoData, stereoBytes,
                              m_refIRadSoundHalAudioFormat->GetSampleRate(), "CLIP_STEREO8");
-                radMemoryFree(stereoData);
             } else {
                 TVOS_AL_BUFFER_DATA(m_Buffer, format, m_pLockedLoadBuffer, m_LockedLoadBytes,
                              m_refIRadSoundHalAudioFormat->GetSampleRate(), "CLIP_8BIT_FALLBACK");
@@ -713,7 +758,7 @@ void radSoundHalBufferWin::OnBufferLoadComplete( unsigned int dataSourceFrames )
         
         ALenum err = alGetError();
         if (err != AL_NO_ERROR) {
-            SDL_Log("[AUDIO_BUF] ERROR: alBufferData failed! buffer=%u err=0x%x ch=%u",
+            TVOS_AUDIO_DIAG("[AUDIO_BUF] ERROR: alBufferData failed! buffer=%u err=0x%x ch=%u",
                     m_Buffer, err, channels);
         }
 #else
@@ -732,39 +777,22 @@ void radSoundHalBufferWin::OnBufferLoadComplete( unsigned int dataSourceFrames )
 #ifdef RAD_TVOS
         // For mono streaming: Use buffer QUEUING instead of detach/upload/reattach
         // This allows continuous playback - queued buffers play in sequence without interruption
-        if (m_ForcedStereo && m_UseBufferQueuing && m_pLockedLoadBuffer != NULL && dataSourceFrames > 0) {
+        if (m_ForcedStereo && m_UseBufferQueuing && m_AttachedSource != 0 && m_pLockedLoadBuffer != NULL && m_LockedLoadBytes > 0) {
             ALuint source = m_AttachedSource;
+            const unsigned int framesToQueue = m_refIRadSoundHalAudioFormat->BytesToFrames( m_LockedLoadBytes );
             
             // STEP 1: Unqueue any processed buffers back to the pool
             UnqueueProcessedBuffers();
             
             // STEP 2: Get a free buffer from the pool
             ALuint queueBuf = GetFreeStreamBuffer();
-            if (queueBuf == 0) {
-                // No free buffers - this means we're not keeping up with playback
-                // Force unqueue of one buffer (may cause audio glitch)
-                SDL_Log("[QUEUE_UNDERRUN] No free buffers! Forcing unqueue...");
-                ALuint forcedBuf = 0;
-                alSourceUnqueueBuffers(source, 1, &forcedBuf);
-                if (alGetError() == AL_NO_ERROR && forcedBuf != 0) {
-                    ReturnStreamBuffer(forcedBuf);
-                    queueBuf = GetFreeStreamBuffer();
-                }
-            }
             
             if (queueBuf != 0) {
                 const unsigned int bits = m_refIRadSoundHalAudioFormat->GetBitResolution();
                 if (bits == 8) {
-                    unsigned int stereoBytes = dataSourceFrames * 2;
-                    uint8_t* monoData = (uint8_t*)m_pLockedLoadBuffer;
-                    uint8_t* stereoData = (uint8_t*)radMemoryAlloc(GetThisAllocator(), stereoBytes);
+                    unsigned int stereoBytes = 0;
+                    const void* stereoData = TvosBuildStereo8Scratch( m_pLockedLoadBuffer, framesToQueue, &stereoBytes );
                     if (stereoData != NULL) {
-                        for (unsigned int i = 0; i < dataSourceFrames; i++) {
-                            uint8_t sample = monoData[i];
-                            stereoData[i * 2 + 0] = sample;
-                            stereoData[i * 2 + 1] = sample;
-                        }
-
                         alBufferData(queueBuf, AL_FORMAT_STEREO8, stereoData, stereoBytes,
                                      m_refIRadSoundHalAudioFormat->GetSampleRate());
                         ALenum bufErr = alGetError();
@@ -775,6 +803,7 @@ void radSoundHalBufferWin::OnBufferLoadComplete( unsigned int dataSourceFrames )
 
                             if (queueErr == AL_NO_ERROR) {
                                 m_QueuedCount++;
+                                MarkStreamBufferQueued(queueBuf, framesToQueue);
 
                                 ALint sourceState = 0;
                                 alGetSourcei(source, AL_SOURCE_STATE, &sourceState);
@@ -784,49 +813,40 @@ void radSoundHalBufferWin::OnBufferLoadComplete( unsigned int dataSourceFrames )
                                 if (s_queueLogCount <= 20 || (s_queueLogCount % 50) == 0) {
                                     ALint queued = 0;
                                     alGetSourcei(source, AL_BUFFERS_QUEUED, &queued);
-                                    SDL_Log("[QUEUE_OK] #%u buf=%u queued=%d frames=%u state=%s source=%u queuedCount=%u",
-                                            s_queueLogCount, queueBuf, queued, dataSourceFrames,
+                                    TVOS_AUDIO_DIAG("[QUEUE_OK] #%u buf=%u queued=%d frames=%u state=%s source=%u queuedCount=%u",
+                                            s_queueLogCount, queueBuf, queued, framesToQueue,
                                             (sourceState == AL_PLAYING) ? "PLAYING" :
                                             (sourceState == AL_STOPPED) ? "STOPPED" : "OTHER", source, m_QueuedCount);
                                 }
 
-                                if (sourceState != AL_PLAYING && m_QueuedCount > 0) {
+                                if (sourceState != AL_PLAYING && m_QueuedCount > 0 && m_QueuePlaybackRequested) {
                                     alSourcePlay(source);
                                     ALenum playErr = alGetError();
                                     if (playErr != AL_NO_ERROR) {
-                                        SDL_Log("[QUEUE_PLAY] ERROR: alSourcePlay failed err=0x%x", playErr);
+                                        TVOS_AUDIO_DIAG("[QUEUE_PLAY] ERROR: alSourcePlay failed err=0x%x", playErr);
                                     } else {
-                                        SDL_Log("[QUEUE_PLAY] Started/resumed playback on source=%u (underrun recovery)", source);
+                                        TVOS_AUDIO_DIAG("[QUEUE_PLAY] Started/resumed playback on source=%u (underrun recovery)", source);
                                     }
                                 }
                             } else {
-                                SDL_Log("[QUEUE_ERR] alSourceQueueBuffers failed: err=0x%x buf=%u source=%u",
+                                TVOS_AUDIO_DIAG("[QUEUE_ERR] alSourceQueueBuffers failed: err=0x%x buf=%u source=%u",
                                         queueErr, queueBuf, source);
                                 ReturnStreamBuffer(queueBuf);
                             }
                         } else {
-                            SDL_Log("[QUEUE_ERR] alBufferData failed: err=0x%x buf=%u bytes=%u",
+                            TVOS_AUDIO_DIAG("[QUEUE_ERR] alBufferData failed: err=0x%x buf=%u bytes=%u",
                                     bufErr, queueBuf, stereoBytes);
                             ReturnStreamBuffer(queueBuf);
                         }
-
-                        radMemoryFree(stereoData);
                     } else {
-                        SDL_Log("[QUEUE_ERR] ALLOC FAILED! stereoBytes=%u", stereoBytes);
+                        TVOS_AUDIO_DIAG("[QUEUE_ERR] stereo scratch failed frames=%u", framesToQueue);
                         ReturnStreamBuffer(queueBuf);
                     }
                 } else {
-                    unsigned int stereoBytes = dataSourceFrames * 4;
-                    int16_t* monoData = (int16_t*)m_pLockedLoadBuffer;
-                    int16_t* stereoData = (int16_t*)radMemoryAlloc(GetThisAllocator(), stereoBytes);
+                    unsigned int stereoBytes = 0;
+                    const void* stereoData = TvosBuildStereo16Scratch( m_pLockedLoadBuffer, framesToQueue, &stereoBytes );
 
                     if (stereoData != NULL) {
-                        for (unsigned int i = 0; i < dataSourceFrames; i++) {
-                            int16_t sample = monoData[i];
-                            stereoData[i * 2 + 0] = sample;
-                            stereoData[i * 2 + 1] = sample;
-                        }
-
                         alBufferData(queueBuf, AL_FORMAT_STEREO16, stereoData, stereoBytes,
                                      m_refIRadSoundHalAudioFormat->GetSampleRate());
                         ALenum bufErr = alGetError();
@@ -837,6 +857,7 @@ void radSoundHalBufferWin::OnBufferLoadComplete( unsigned int dataSourceFrames )
 
                             if (queueErr == AL_NO_ERROR) {
                                 m_QueuedCount++;
+                                MarkStreamBufferQueued(queueBuf, framesToQueue);
 
                                 ALint sourceState = 0;
                                 alGetSourcei(source, AL_SOURCE_STATE, &sourceState);
@@ -846,40 +867,36 @@ void radSoundHalBufferWin::OnBufferLoadComplete( unsigned int dataSourceFrames )
                                 if (s_queueLogCount <= 20 || (s_queueLogCount % 50) == 0) {
                                     ALint queued = 0;
                                     alGetSourcei(source, AL_BUFFERS_QUEUED, &queued);
-                                    SDL_Log("[QUEUE_OK] #%u buf=%u queued=%d frames=%u state=%s source=%u queuedCount=%u",
-                                            s_queueLogCount, queueBuf, queued, dataSourceFrames,
+                                    TVOS_AUDIO_DIAG("[QUEUE_OK] #%u buf=%u queued=%d frames=%u state=%s source=%u queuedCount=%u",
+                                            s_queueLogCount, queueBuf, queued, framesToQueue,
                                             (sourceState == AL_PLAYING) ? "PLAYING" :
                                             (sourceState == AL_STOPPED) ? "STOPPED" : "OTHER", source, m_QueuedCount);
                                 }
 
-                                if (sourceState != AL_PLAYING && m_QueuedCount > 0) {
+                                if (sourceState != AL_PLAYING && m_QueuedCount > 0 && m_QueuePlaybackRequested) {
                                     alSourcePlay(source);
                                     ALenum playErr = alGetError();
                                     if (playErr != AL_NO_ERROR) {
-                                        SDL_Log("[QUEUE_PLAY] ERROR: alSourcePlay failed err=0x%x", playErr);
+                                        TVOS_AUDIO_DIAG("[QUEUE_PLAY] ERROR: alSourcePlay failed err=0x%x", playErr);
                                     } else {
-                                        SDL_Log("[QUEUE_PLAY] Started/resumed playback on source=%u (underrun recovery)", source);
+                                        TVOS_AUDIO_DIAG("[QUEUE_PLAY] Started/resumed playback on source=%u (underrun recovery)", source);
                                     }
                                 }
                             } else {
-                                SDL_Log("[QUEUE_ERR] alSourceQueueBuffers failed: err=0x%x buf=%u source=%u",
+                                TVOS_AUDIO_DIAG("[QUEUE_ERR] alSourceQueueBuffers failed: err=0x%x buf=%u source=%u",
                                         queueErr, queueBuf, source);
                                 ReturnStreamBuffer(queueBuf);
                             }
                         } else {
-                            SDL_Log("[QUEUE_ERR] alBufferData failed: err=0x%x buf=%u bytes=%u",
+                            TVOS_AUDIO_DIAG("[QUEUE_ERR] alBufferData failed: err=0x%x buf=%u bytes=%u",
                                     bufErr, queueBuf, stereoBytes);
                             ReturnStreamBuffer(queueBuf);
                         }
-
-                        radMemoryFree(stereoData);
                     } else {
-                        SDL_Log("[QUEUE_ERR] ALLOC FAILED! stereoBytes=%u", stereoBytes);
+                        TVOS_AUDIO_DIAG("[QUEUE_ERR] stereo scratch failed frames=%u", framesToQueue);
                         ReturnStreamBuffer(queueBuf);
                     }
                 }
-            } else {
-                SDL_Log("[QUEUE_ERR] No buffer available even after force unqueue!");
             }
             
             m_pLockedLoadBuffer = NULL;
@@ -887,7 +904,7 @@ void radSoundHalBufferWin::OnBufferLoadComplete( unsigned int dataSourceFrames )
         }
         // Fallback for forced stereo WITHOUT queuing (shouldn't happen but just in case)
         else if (m_ForcedStereo && !m_UseBufferQueuing && m_pLockedLoadBuffer != NULL && dataSourceFrames > 0) {
-            SDL_Log("[MONO_FALLBACK] Using old detach/reattach path - this shouldn't happen!");
+            TVOS_AUDIO_DIAG("[MONO_FALLBACK] Using old detach/reattach path - this shouldn't happen!");
             m_pLockedLoadBuffer = NULL;
             m_LockedLoadBytes = 0;
         }
@@ -969,10 +986,56 @@ ALuint radSoundHalBufferWin::GetFreeStreamBuffer()
     for (unsigned int i = 0; i < kStreamBufferPoolSize; i++) {
         if (m_StreamBufferFree[i] && m_StreamBufferPool[i] != 0) {
             m_StreamBufferFree[i] = false;
+            m_StreamBufferFrames[i] = 0;
             return m_StreamBufferPool[i];
         }
     }
     return 0;  // No free buffers available
+}
+
+//========================================================================
+// radSoundHalBufferWin::HasFreeStreamBuffer
+//========================================================================
+
+bool radSoundHalBufferWin::HasFreeStreamBuffer()
+{
+    UnqueueProcessedBuffers();
+
+    for (unsigned int i = 0; i < kStreamBufferPoolSize; i++) {
+        if (m_StreamBufferFree[i] && m_StreamBufferPool[i] != 0) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+//========================================================================
+// radSoundHalBufferWin::FindStreamBufferIndex
+//========================================================================
+
+int radSoundHalBufferWin::FindStreamBufferIndex(ALuint buffer) const
+{
+    for (unsigned int i = 0; i < kStreamBufferPoolSize; i++) {
+        if (m_StreamBufferPool[i] == buffer) {
+            return static_cast<int>(i);
+        }
+    }
+
+    return -1;
+}
+
+//========================================================================
+// radSoundHalBufferWin::MarkStreamBufferQueued
+//========================================================================
+
+void radSoundHalBufferWin::MarkStreamBufferQueued(ALuint buffer, unsigned int frames)
+{
+    int index = FindStreamBufferIndex(buffer);
+    if (index >= 0) {
+        m_StreamBufferFrames[index] = frames;
+        m_StreamBufferFree[index] = false;
+    }
 }
 
 //========================================================================
@@ -981,12 +1044,54 @@ ALuint radSoundHalBufferWin::GetFreeStreamBuffer()
 
 void radSoundHalBufferWin::ReturnStreamBuffer(ALuint buffer)
 {
-    for (unsigned int i = 0; i < kStreamBufferPoolSize; i++) {
-        if (m_StreamBufferPool[i] == buffer) {
-            m_StreamBufferFree[i] = true;
-            return;
-        }
+    int index = FindStreamBufferIndex(buffer);
+    if (index >= 0) {
+        m_StreamBufferFrames[index] = 0;
+        m_StreamBufferFree[index] = true;
     }
+}
+
+//========================================================================
+// radSoundHalBufferWin::ReturnProcessedStreamBuffer
+//========================================================================
+
+void radSoundHalBufferWin::ReturnProcessedStreamBuffer(ALuint buffer)
+{
+    int index = FindStreamBufferIndex(buffer);
+    if (index >= 0) {
+        if (m_SizeInFrames > 0) {
+            m_ProcessedFrames = (m_ProcessedFrames + m_StreamBufferFrames[index]) % m_SizeInFrames;
+        }
+
+        m_StreamBufferFrames[index] = 0;
+        m_StreamBufferFree[index] = true;
+    }
+}
+
+//========================================================================
+// radSoundHalBufferWin::GetQueuedPlaybackPositionInSamples
+//========================================================================
+
+unsigned int radSoundHalBufferWin::GetQueuedPlaybackPositionInSamples()
+{
+    if (!m_UseBufferQueuing || m_AttachedSource == 0 || m_refIRadSoundHalAudioFormat == NULL) {
+        return 0;
+    }
+
+    UnqueueProcessedBuffers();
+
+    ALint offsetInFrames = 0;
+    alGetSourcei(m_AttachedSource, AL_SAMPLE_OFFSET, &offsetInFrames);
+    if (alGetError() != AL_NO_ERROR || offsetInFrames < 0) {
+        offsetInFrames = 0;
+    }
+
+    unsigned int playbackFrames = m_ProcessedFrames + static_cast<unsigned int>(offsetInFrames);
+    if (m_SizeInFrames > 0) {
+        playbackFrames %= m_SizeInFrames;
+    }
+
+    return m_refIRadSoundHalAudioFormat->FramesToSamples(playbackFrames);
 }
 
 //========================================================================
@@ -1006,7 +1111,7 @@ void radSoundHalBufferWin::UnqueueProcessedBuffers()
     ALint looping = AL_FALSE;
     alGetSourcei(m_AttachedSource, AL_LOOPING, &looping);
     if (looping == AL_TRUE) {
-        SDL_Log("[QUEUE_BUG] Source %u has AL_LOOPING=TRUE! Forcing OFF.", m_AttachedSource);
+        TVOS_AUDIO_DIAG("[QUEUE_BUG] Source %u has AL_LOOPING=TRUE! Forcing OFF.", m_AttachedSource);
         alSourcei(m_AttachedSource, AL_LOOPING, AL_FALSE);
         alGetError();
     }
@@ -1016,17 +1121,17 @@ void radSoundHalBufferWin::UnqueueProcessedBuffers()
         alSourceUnqueueBuffers(m_AttachedSource, 1, &unqueuedBuf);
         ALenum err = alGetError();
         if (err == AL_NO_ERROR && unqueuedBuf != 0) {
-            ReturnStreamBuffer(unqueuedBuf);
+            ReturnProcessedStreamBuffer(unqueuedBuf);
             if (m_QueuedCount > 0) m_QueuedCount--;
             
             static unsigned int s_unqueueLogCount = 0;
             s_unqueueLogCount++;
             if (s_unqueueLogCount <= 20 || (s_unqueueLogCount % 100) == 0) {
-                SDL_Log("[QUEUE_UNQUEUE] #%u buf=%u returned, source=%u, queuedCount=%u",
+                TVOS_AUDIO_DIAG("[QUEUE_UNQUEUE] #%u buf=%u returned, source=%u, queuedCount=%u",
                         s_unqueueLogCount, unqueuedBuf, m_AttachedSource, m_QueuedCount);
             }
         } else if (err != AL_NO_ERROR) {
-            SDL_Log("[QUEUE_UNQUEUE] ERROR: alSourceUnqueueBuffers err=0x%x source=%u", err, m_AttachedSource);
+            TVOS_AUDIO_DIAG("[QUEUE_UNQUEUE] ERROR: alSourceUnqueueBuffers err=0x%x source=%u", err, m_AttachedSource);
             break;
         }
         processed--;
@@ -1065,7 +1170,7 @@ void radSoundHalBufferWin::FlushBufferQueue()
     ALint queued = 0;
     alGetSourcei(src, AL_BUFFERS_QUEUED, &queued);
     
-    SDL_Log("[QUEUE_FLUSH] Hard reset source=%u: AL_BUFFER=0 (err=0x%x), queued after=%d",
+    TVOS_AUDIO_DIAG("[QUEUE_FLUSH] Hard reset source=%u: AL_BUFFER=0 (err=0x%x), queued after=%d",
             src, detachErr, queued);
     
     // If any buffers somehow still queued, unqueue them (shouldn't happen after AL_BUFFER=0)
@@ -1081,13 +1186,15 @@ void radSoundHalBufferWin::FlushBufferQueue()
     // STEP 4: Reset internal pool state - ALL buffers free
     for (unsigned int i = 0; i < kStreamBufferPoolSize; i++) {
         m_StreamBufferFree[i] = true;
+        m_StreamBufferFrames[i] = 0;
     }
     m_QueuedCount = 0;
+    m_ProcessedFrames = 0;
     
     // STEP 5: Clear data source identity (will be set by new stream)
     m_LastDataSourcePtr = NULL;
     
-    SDL_Log("[QUEUE_FLUSH] Reset complete: source=%u, pool=[6 free], queuedCount=0", src);
+    TVOS_AUDIO_DIAG("[QUEUE_FLUSH] Reset complete: source=%u, pool reset, queuedCount=0", src);
 }
 #endif
 
@@ -1099,4 +1206,3 @@ IRadSoundHalBuffer * radSoundHalBufferCreate( radMemoryAllocator allocator )
 {
 	return new ( "radSoundHalBufferWin", allocator ) radSoundHalBufferWin( );
 }
-

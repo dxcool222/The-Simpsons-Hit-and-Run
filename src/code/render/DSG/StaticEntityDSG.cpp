@@ -13,13 +13,18 @@
 //========================================
 #include <stdio.h>
 #ifdef RAD_TVOS
+#if defined(RAD_MACOS)
+#include <pddi/gles/gl.hpp>
+#else
 #include <OpenGLES/ES2/gl.h>
+#endif
 #endif
 
 //========================================
 // Project Includes
 //========================================
 #include <render/DSG/StaticEntityDSG.h>
+#include <diagnostics/tvosdiagnostics.h>
 #include <memory/srrmemory.h>
 #include <p3d/utility.hpp>
 #include <p3d/shader.hpp>
@@ -243,6 +248,7 @@ tDrawable* StaticEntityDSG::mpDraw()
 // Constraints: None.
 //
 //========================================================================
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_RENDER_DIAGNOSTICS )
 static int sStaticEntityDisplayCount = 0;
 static int sZone3LogCount = 0;
 static int sZone1LogCount = 0;
@@ -265,22 +271,40 @@ static bool IsTerrainName(const char* name)
 static void LogMaterialDiag(const char* zone, int logNum, const char* name, tGeometry* geo, float x, float z)
 {
     if(!geo) {
-        printf("[MAT_DIAG_%s] #%d name='%s' pos=(%.1f,%.1f) ERROR: geo=NULL\n", zone, logNum, name, x, z);
-        fflush(stdout);
+        SRR2::Diagnostics::Errorf(
+            SRR2::Diagnostics::RENDER,
+            "[MAT_DIAG_%s] #%d name='%s' pos=(%.1f,%.1f) error=geo_null",
+            zone,
+            logNum,
+            name ? name : "NULL",
+            x,
+            z );
         return;
     }
     
     int numShaders = geo->GetNumShader();
     int numPrimGroups = geo->GetNumPrimGroup();
     
-    printf("[MAT_DIAG_%s] #%d name='%s' pos=(%.1f,%.1f) shaders=%d primGroups=%d\n",
-        zone, logNum, name, x, z, numShaders, numPrimGroups);
+    SRR2::Diagnostics::Tracef(
+        SRR2::Diagnostics::RENDER,
+        "[MAT_DIAG_%s] #%d name='%s' pos=(%.1f,%.1f) shaders=%d primGroups=%d",
+        zone,
+        logNum,
+        name ? name : "NULL",
+        x,
+        z,
+        numShaders,
+        numPrimGroups );
     
     for(int i = 0; i < numShaders && i < 4; i++) // Log up to 4 shaders
     {
         tShader* shader = geo->GetShader(i);
         if(!shader) {
-            printf("[MAT_DIAG_%s]   shader[%d]=NULL\n", zone, i);
+            SRR2::Diagnostics::Anomalyf(
+                SRR2::Diagnostics::RENDER,
+                "[MAT_DIAG_%s] shader[%d]=NULL",
+                zone,
+                i );
             continue;
         }
         
@@ -288,11 +312,17 @@ static void LogMaterialDiag(const char* zone, int logNum, const char* name, tGeo
         const char* shaderType = pddi ? pddi->GetType() : "NULL";
         bool translucent = shader->mTranslucent;
         
-        printf("[MAT_DIAG_%s]   shader[%d] type='%s' translucent=%d pddi=%p\n",
-            zone, i, shaderType ? shaderType : "NULL", translucent ? 1 : 0, (void*)pddi);
+        SRR2::Diagnostics::Tracef(
+            SRR2::Diagnostics::RENDER,
+            "[MAT_DIAG_%s] shader[%d] type='%s' translucent=%d pddi=%p",
+            zone,
+            i,
+            shaderType ? shaderType : "NULL",
+            translucent ? 1 : 0,
+            (void*)pddi );
     }
-    fflush(stdout);
 }
+#endif
 
 void StaticEntityDSG::Display()
 {
@@ -302,6 +332,7 @@ void StaticEntityDSG::Display()
     if(IS_DRAW_LONG) return;
     DSG_BEGIN_PROFILE(profileName)
 
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_RENDER_DIAGNOSTICS )
     sStaticEntityDisplayCount++;
     
     // Get position for zone detection
@@ -335,7 +366,6 @@ void StaticEntityDSG::Display()
         }
     }
     
-#ifdef RAD_TVOS
     // TERRAIN DIAGNOSTIC: Log any entity with terrain/road-like name
     const char* entityName = GetName();
     if(IsTerrainName(entityName) && (mIsGeo & GEO))
@@ -343,10 +373,14 @@ void StaticEntityDSG::Display()
         sTerrainLogCount++;
         if(sTerrainLogCount <= 50 || (sTerrainLogCount % 500 == 0))
         {
-            printf("[TERRAIN_DIAG] #%d name='%s' pos=(%.1f,%.1f) inZ3=%d\n",
-                sTerrainLogCount, entityName, centerX, centerZ,
-                isZone3Entity ? 1 : 0);
-            fflush(stdout);
+            SRR2::Diagnostics::Tracef(
+                SRR2::Diagnostics::RENDER,
+                "[TERRAIN_DIAG] #%d name='%s' pos=(%.1f,%.1f) inZ3=%d",
+                sTerrainLogCount,
+                entityName ? entityName : "NULL",
+                centerX,
+                centerZ,
+                isZone3Entity ? 1 : 0 );
         }
     }
 #endif
@@ -359,7 +393,7 @@ void StaticEntityDSG::Display()
     }
     else
     {
-#ifdef RAD_TVOS
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_RENDER_DIAGNOSTICS )
         // CRITICAL: Log GL state RIGHT BEFORE Zone 3 entity draws
         if(isZone3Entity && (sZone3LogCount <= 10 || (sZone3LogCount % 500 == 0)))
         {
@@ -371,10 +405,18 @@ void StaticEntityDSG::Display()
             cullFaceEnabled = glIsEnabled(GL_CULL_FACE);
             glGetIntegerv(GL_DEPTH_FUNC, &depthFunc);
             glGetIntegerv(GL_CULL_FACE_MODE, &cullFaceMode);
-            printf("[Z3_DRAW_STATE] #%d BEFORE draw: zTest=%d zWrite=%d blend=%d zFunc=0x%x cull=%d cullMode=0x%x pos=(%.1f,%.1f)\n",
-                sZone3LogCount, depthTest ? 1 : 0, depthMask ? 1 : 0, blendEnabled ? 1 : 0, depthFunc, 
-                cullFaceEnabled ? 1 : 0, cullFaceMode, centerX, centerZ);
-            fflush(stdout);
+            SRR2::Diagnostics::Tracef(
+                SRR2::Diagnostics::RENDER,
+                "[Z3_DRAW_STATE] #%d zTest=%d zWrite=%d blend=%d zFunc=0x%x cull=%d cullMode=0x%x pos=(%.1f,%.1f)",
+                sZone3LogCount,
+                depthTest ? 1 : 0,
+                depthMask ? 1 : 0,
+                blendEnabled ? 1 : 0,
+                depthFunc,
+                cullFaceEnabled ? 1 : 0,
+                cullFaceMode,
+                centerX,
+                centerZ );
         }
         
         // DEBUG: Set flag to force Zone 3 geometry to render bright red
@@ -383,7 +425,7 @@ void StaticEntityDSG::Display()
         // g_debugForceZone3Red = isZone3Entity;
 #endif
         mpDrawstuff->Display();
-#ifdef RAD_TVOS
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_RENDER_DIAGNOSTICS )
         // g_debugForceZone3Red = false;
 #endif
     }
@@ -564,5 +606,3 @@ void StaticEntityDSG::SetInternalState()
 // Private Member Functions : StaticEntityDSG 
 //
 //************************************************************************
-
-

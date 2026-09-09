@@ -213,7 +213,7 @@ class radControllerInputPointTvOS
         if ( ( newValue != m_Value ) && 
              ( fabsf( newValue - m_Value ) >= m_Tolerance ) )
         {
-#ifdef RAD_TVOS
+#if defined( RAD_TVOS_INPUT_DIAGNOSTICS )
             const float oldValue = m_Value;
             if ( m_pType == g_TvOSipt[ 0 ] )
             {

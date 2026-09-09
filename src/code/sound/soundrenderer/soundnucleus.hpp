@@ -50,6 +50,7 @@ void                SoundNucleusUnCaptureStreamerResources( StreamerResources * 
 
 void SoundNucleusLoadClip( const char * pFileName, bool looping );
 bool SoundNucleusIsClipLoaded( void );
+bool SoundNucleusIsClipLoadInProgress( void );
 void SoundNucleusCancelClipLoad( void );
 void SoundNucleusFinishClipLoad( IRadSoundClip ** ppClip );
 void SoundNucleusServiceClipLoad( void );
@@ -57,7 +58,6 @@ void SoundNucleusServiceClipLoad( void );
 }
 
 #endif
-
 
 
 

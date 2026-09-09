@@ -71,7 +71,7 @@ class SoundCluster : public Sound::IDaSoundDynaLoadCompletionCallback,
         SoundCluster( const SoundCluster& original );
         SoundCluster& operator=( const SoundCluster& rhs );
 
-        static const int MAX_RESOURCES = 90;
+        static const int MAX_RESOURCES = 160;
 
         //
         // True if the sounds for this cluster are allocated in sound memory
@@ -93,11 +93,11 @@ class SoundCluster : public Sound::IDaSoundDynaLoadCompletionCallback,
         //
         SoundFileHandler* m_loadCompleteCallbackObj;
 
-#ifdef RAD_DEBUG
+        //
+        // SoundLoader passes SoundClusterName index; used for debug/diagnostics.
+        //
         int m_clusterIndex;
-#endif
 };
 
 
 #endif // SOUNDCLUSTER_H
-

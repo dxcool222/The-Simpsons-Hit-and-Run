@@ -11,10 +11,12 @@
 #include <math.h>
 #include <pddi/base/debug.hpp>
 #include <radmemory.hpp>
+#include <diagnostics/tvosdiagnostics.h>
 
 #include <microprofile.h>
 
 #ifdef RAD_TVOS
+#if defined( RAD_TVOS_RENDER_DIAGNOSTICS )
 #if __has_include(<SDL2/SDL.h>)
     #include <SDL2/SDL.h>
 #else
@@ -25,25 +27,32 @@ static unsigned int s_tvosVideoTexCount = 0;
 static void TvosLogTexUpload( const char* path, int w, int h, GLenum internalFmt, GLenum fmt, GLenum type, GLuint texId = 0, bool isVideo = false, void* ptr = nullptr )
 {
     s_tvosTexCount++;
+    GLenum err = glGetError();
+    SRR2::Diagnostics::RecordTextureUpload( path ? path : "upload", (uint32_t)w, (uint32_t)h, isVideo, (uint32_t)err );
     if ( isVideo )
     {
         s_tvosVideoTexCount++;
         // Only log first 3 video texture uploads to reduce spam
         if ( s_tvosVideoTexCount <= 3 )
         {
-            GLenum err = glGetError();
-            SDL_Log( "[VIDEO_TEX] #%u ptr=%p texID=%u %dx%d fmt=0x%x err=0x%x",
+            SRR2::Diagnostics::Tracef( SRR2::Diagnostics::VIDEO,
+                     "[VIDEO_TEX] #%u ptr=%p texID=%u %dx%d fmt=0x%x err=0x%x",
                      s_tvosVideoTexCount, ptr, texId, w, h, (unsigned)fmt, (unsigned)err );
         }
     }
     else if ( s_tvosTexCount <= 20 || ( s_tvosTexCount % 200 ) == 0 )
     {
-        GLenum err = glGetError();
-        SDL_Log( "TVOS_GL Tex #%u: %s ptr=%p %dx%d internalFmt=0x%x fmt=0x%x type=0x%x err=0x%x",
+        SRR2::Diagnostics::Tracef( SRR2::Diagnostics::RENDER,
+                 "TVOS_GL Tex #%u: %s ptr=%p %dx%d internalFmt=0x%x fmt=0x%x type=0x%x err=0x%x",
                  s_tvosTexCount, path ? path : "upload", ptr, w, h,
                  (unsigned)internalFmt, (unsigned)fmt, (unsigned)type, (unsigned)err );
     }
 }
+#else
+static void TvosLogTexUpload( const char*, int, int, GLenum, GLenum, GLenum, GLuint = 0, bool = false, void* = nullptr )
+{
+}
+#endif
 #endif
 
 static inline GLenum PickPixelFormat(pddiPixelFormat format)
@@ -180,27 +189,47 @@ void pglTexture::SetGLState(void)
 #ifdef RAD_TVOS
             GLenum internalFmt = GL_RGBA;
             GLenum srcFmt = lock.native ? GL_BGRA_EXT : GL_RGBA;
-            // Detect likely video textures by size (1024x1024 is video tile size)
-            bool isLikelyVideo = ( xSize == 1024 && ySize == 1024 );
+            bool isLikelyVideo = isVideoTexture || ( xSize == 1024 && ySize == 1024 );
             
-            // ONE-TIME diagnostic: verify texture data at upload time
+            // One-time trace: verify video texture data without printing raw pixels every run.
             static bool s_texUploadDiagDone = false;
             if ( !s_texUploadDiagDone && isLikelyVideo ) {
                 s_texUploadDiagDone = true;
-                SDL_Log( "========================================================" );
-                SDL_Log( "[TEX_UPLOAD] *** TEXTURE UPLOAD DIAGNOSTIC ***" );
-                SDL_Log( "[TEX_UPLOAD] bits[0]=%p size=%dx%d fmt=0x%x", (void*)bits[0], xSize, ySize, srcFmt );
-                // Sample first few pixels of the source data
+#if defined( RAD_TVOS_RENDER_DIAGNOSTICS )
                 unsigned char* src = (unsigned char*)bits[0];
-                SDL_Log( "[TEX_UPLOAD] Pixel[0,0]: BGRA=(%u,%u,%u,%u)", src[0], src[1], src[2], src[3] );
-                SDL_Log( "[TEX_UPLOAD] Pixel[1,0]: BGRA=(%u,%u,%u,%u)", src[4], src[5], src[6], src[7] );
-                // Sample from row 100 (if video is 480 tall, this is in video area)
-                unsigned char* row100 = src + 100 * xSize * 4;
-                SDL_Log( "[TEX_UPLOAD] Pixel[0,100]: BGRA=(%u,%u,%u,%u)", row100[0], row100[1], row100[2], row100[3] );
-                // Check if data looks valid (not all zeros)
-                bool hasData = (src[0] != 0 || src[1] != 0 || src[2] != 0);
-                SDL_Log( "[TEX_UPLOAD] Data appears %s", hasData ? "VALID" : "ALL BLACK - PROBLEM!" );
-                SDL_Log( "========================================================" );
+                unsigned char* row100 = ( src && ySize > 100 ) ? ( src + 100 * xSize * 4 ) : src;
+                bool hasData = src && ( src[0] != 0 || src[1] != 0 || src[2] != 0 || row100[0] != 0 || row100[1] != 0 || row100[2] != 0 );
+                SRR2::Diagnostics::Tracef(
+                    SRR2::Diagnostics::VIDEO,
+                    "[TEX_UPLOAD_TRACE] ptr=%p size=%dx%d fmt=0x%x p00=%u,%u,%u,%u p10=%u,%u,%u,%u p0100=%u,%u,%u,%u hasData=%d",
+                    (void*)bits[0],
+                    xSize,
+                    ySize,
+                    (unsigned)srcFmt,
+                    src ? src[0] : 0,
+                    src ? src[1] : 0,
+                    src ? src[2] : 0,
+                    src ? src[3] : 0,
+                    src ? src[4] : 0,
+                    src ? src[5] : 0,
+                    src ? src[6] : 0,
+                    src ? src[7] : 0,
+                    row100 ? row100[0] : 0,
+                    row100 ? row100[1] : 0,
+                    row100 ? row100[2] : 0,
+                    row100 ? row100[3] : 0,
+                    hasData ? 1 : 0 );
+                if ( !hasData )
+                {
+                    SRR2::Diagnostics::Anomalyf(
+                        SRR2::Diagnostics::VIDEO,
+                        "[VIDEO_TEXTURE_BLACK] ptr=%p size=%dx%d fmt=0x%x",
+                        (void*)bits[0],
+                        xSize,
+                        ySize,
+                        (unsigned)srcFmt );
+                }
+#endif
             }
             
             if ( newlyCreated )
@@ -313,8 +342,14 @@ bool pglTexture::Create(int x, int y, int bpp, int alphaDepth, int nMip, pddiTex
     log2X = fastlog2(xSize);
     log2Y = fastlog2(ySize);
 
-#ifndef RAD_VITA
+#if !defined( RAD_VITA ) && !defined( RAD_TVOS )
     if((log2X == -1) || (log2Y == -1))
+    {
+        lastError = PDDI_TEX_NOT_POW_2;
+        return false;
+    }
+#elif defined( RAD_TVOS )
+    if ( ( ( log2X == -1 ) || ( log2Y == -1 ) ) && nMipMap > 0 )
     {
         lastError = PDDI_TEX_NOT_POW_2;
         return false;
@@ -445,8 +480,8 @@ pddiLockInfo* pglTexture::Lock(int mipMap, pddiRect* rect)
 {
     PDDIASSERT(mipMap <= nMipMap);
 
-    lock.width = 1 << (log2X-mipMap);
-    lock.height = 1 << (log2Y-mipMap);
+    lock.width = xSize >> mipMap;
+    lock.height = ySize >> mipMap;
     if (lock.format == PDDI_PIXEL_DXT1 || lock.format == PDDI_PIXEL_DXT3 || lock.format == PDDI_PIXEL_DXT5)
     {
         unsigned int blocksize = lock.format == PDDI_PIXEL_DXT1 ? 8 : 16;
@@ -520,5 +555,3 @@ int pglTexture::GetPalette(pddiColour* palette)
 {
     return 0;
 }
-
-

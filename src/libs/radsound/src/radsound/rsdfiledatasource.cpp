@@ -7,12 +7,13 @@
 #include <radsoundfile.hpp>
 #include "rsdfiledatasource.hpp"
 
-#ifdef RAD_TVOS
-#if __has_include(<SDL2/SDL.h>)
-    #include <SDL2/SDL.h>
-#else
-    #include <SDL.h>
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_AUDIO_DIAGNOSTICS )
+#include <radtime.hpp>
+#include <diagnostics/tvosdiagnostics.h>
+#include <sound/diagnostics/audioloaddiag_bridge.hpp>
 #endif
+
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_AUDIO_DIAGNOSTICS )
 static unsigned int s_audioFileLoadCount = 0;
 
 static const char* GetEncodingName(IRadSoundHalAudioFormat::Encoding enc) {
@@ -50,6 +51,18 @@ void RadSoundSetFilePerformanceCallback( RadSoundFilePerformanceCallback * pCall
 radSoundRsdFileDataSource::radSoundRsdFileDataSource( void )
 {
 	m_StateInfo.m_State = StateInfo::NONE;
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_AUDIO_DIAGNOSTICS )
+	m_diagT0 = 0;
+	m_diagFirstGetStateUs = 0;
+	m_diagOpenSubmitUs = 0;
+	m_diagOpenCompleteUs = 0;
+	m_diagHeaderReadSubmitUs = 0;
+	m_diagHeaderReadCompleteUs = 0;
+	m_diagEmittedFileReadyLog = false;
+	m_diagDataReadSubmitCount = 0;
+	m_diagDataReadCompleteCount = 0;
+	m_diagAsyncReadStartUs = 0;
+#endif
 }
 
 radSoundRsdFileDataSource::~radSoundRsdFileDataSource( void )
@@ -58,10 +71,19 @@ radSoundRsdFileDataSource::~radSoundRsdFileDataSource( void )
 
 IRadSoundHalDataSource::State radSoundRsdFileDataSource::GetState( void )
 {
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_AUDIO_DIAGNOSTICS )
+	if ( m_diagT0 != 0 && m_diagFirstGetStateUs == 0 )
+	{
+		m_diagFirstGetStateUs = radTimeGetMicroseconds64( );
+	}
+#endif
     if ( m_StateInfo.m_State == StateInfo::INITIALIZED )
     {
         if ( m_refIRadFile == NULL )
         {            
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_AUDIO_DIAGNOSTICS )
+			m_diagOpenSubmitUs = radTimeGetMicroseconds64( );
+#endif
 	        ::radFileOpen(
 	            & m_refIRadFile,
 	            fileName,
@@ -146,7 +168,17 @@ void radSoundRsdFileDataSource::InitializeFromFileName
 	m_StateInfo.m_InitializedInfo.m_InitialPlaybackPos = initialPlaybackPosition;
 	m_StateInfo.m_InitializedInfo.m_HighPriority = highPriority;
 
-#ifdef RAD_TVOS
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_AUDIO_DIAGNOSTICS )
+	m_diagT0 = radTimeGetMicroseconds64( );
+	m_diagFirstGetStateUs = 0;
+	m_diagOpenSubmitUs = 0;
+	m_diagOpenCompleteUs = 0;
+	m_diagHeaderReadSubmitUs = 0;
+	m_diagHeaderReadCompleteUs = 0;
+	m_diagEmittedFileReadyLog = false;
+	m_diagDataReadSubmitCount = 0;
+	m_diagDataReadCompleteCount = 0;
+	m_diagAsyncReadStartUs = 0;
     s_audioFileLoadCount++;
     
     // Log first 50 audio files + every 100th after to catch NPC dialog loading
@@ -168,9 +200,9 @@ void radSoundRsdFileDataSource::InitializeFromFileName
                          strstr(pFileName, "voice") != NULL ||
                          strstr(pFileName, "Voice") != NULL);
         
-        SDL_Log("[AUDIO_FILE] #%u %s: '%s'",
+        TVOS_AUDIO_DIAG("[AUDIO_FILE] #%u %s: '%s'",
                 s_audioFileLoadCount, isDialog ? "DIALOG" : "Load", pFileName);
-        SDL_Log("[AUDIO_FILE] #%u Format: enc=%s rate=%u ch=%u bits=%u",
+        TVOS_AUDIO_DIAG("[AUDIO_FILE] #%u Format: enc=%s rate=%u ch=%u bits=%u",
                 s_audioFileLoadCount, encoding, sampleRate, channels, bitRes);
     }
 #endif
@@ -218,7 +250,7 @@ void radSoundRsdFileDataSource::GetFramesAsync
 	// Get a read going
 
 	m_StateInfo.m_ReadingDataInfo.m_ReadSizeInFrames = sizeInFrames;
-#ifdef RAD_TVOS
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_AUDIO_DIAGNOSTICS )
 	m_StateInfo.m_ReadingDataInfo.m_pReadBuffer = pFrameBuffer;
 #endif
 	m_refIRadSoundHalDataSourceCallback = pIRshdsc;
@@ -249,7 +281,7 @@ void radSoundRsdFileDataSource::GetFramesAsync
     //bytes = radMemoryRoundUp( bytes, 2048 );
 #endif
 
-#ifdef RAD_TVOS
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_AUDIO_DIAGNOSTICS )
     static unsigned int s_readAsyncCount = 0;
     s_readAsyncCount++;
     if (s_readAsyncCount <= 20 || (s_readAsyncCount % 100) == 0) {
@@ -259,12 +291,24 @@ void radSoundRsdFileDataSource::GetFramesAsync
         for (unsigned int i = 0; i < 64 && i < bytes; i++) {
             if (data[i] != 0) { preAllZero = false; break; }
         }
-        SDL_Log("[FILE_READ] #%u PRE-ReadAsync: file='%s' dest=%p bytes=%u memSpace=%d preZero=%s",
+        TVOS_AUDIO_DIAG("[FILE_READ] #%u PRE-ReadAsync: file='%s' dest=%p bytes=%u memSpace=%d preZero=%s",
                 s_readAsyncCount, fileName, pFrameBuffer, bytes, (int)destinationMemorySpace,
                 preAllZero ? "yes" : "no");
     }
+    m_diagAsyncReadStartUs = radTimeGetMicroseconds64( );
+	++m_diagDataReadSubmitCount;
+	if ( m_diagDataReadSubmitCount == 1U )
+	{
+        SRR2::Diagnostics::Tracef(
+            SRR2::Diagnostics::AUDIO_LOAD,
+			"[CLIP_PHASE_RSD] phase=ReadAsync_submitted file='%s' ordinal=%u bytes=%u frames=%u",
+			fileName,
+			m_diagDataReadSubmitCount,
+			bytes,
+			sizeInFrames );
+	}
 #endif
-    
+	
 	m_refIRadFile->ReadAsync(pFrameBuffer, bytes, destinationMemorySpace );
 	m_refIRadFile->AddCompletionCallback( this, NULL );
 
@@ -314,9 +358,15 @@ void radSoundRsdFileDataSource::_StateOpeningFile( void )
 {
 	if( m_refIRadFile->IsOpen( ) == true )
 	{
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_AUDIO_DIAGNOSTICS )
+		if ( m_diagOpenCompleteUs == 0 )
+		{
+			m_diagOpenCompleteUs = radTimeGetMicroseconds64( );
+		}
+#endif
         m_refIRadFile->SetBufferedRead( IRadFile::BufferedReadOn );
         
-#ifdef RAD_TVOS
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_AUDIO_DIAGNOSTICS )
         // CRITICAL: Log whether we're reading the actual RSD header or using pre-set format
         static unsigned int s_fileOpenCount = 0;
         s_fileOpenCount++;
@@ -352,25 +402,25 @@ void radSoundRsdFileDataSource::_StateOpeningFile( void )
                 }
             }
             
-            SDL_Log("[RSD_TRUTH] #%u file='%s'", s_fileOpenCount, fileName);
-            SDL_Log("[RSD_TRUTH] #%u ACTUAL FILE HEADER: enc='%s' (0x%02x%02x%02x%02x) tag='%.4s'",
+            TVOS_AUDIO_DIAG("[RSD_TRUTH] #%u file='%s'", s_fileOpenCount, fileName);
+            TVOS_AUDIO_DIAG("[RSD_TRUTH] #%u ACTUAL FILE HEADER: enc='%s' (0x%02x%02x%02x%02x) tag='%.4s'",
                     s_fileOpenCount, fileEnc,
                     headerBytes[4], headerBytes[5], headerBytes[6], headerBytes[7],
                     (char*)headerBytes);
-            SDL_Log("[RSD_TRUTH] #%u GAME CODE SAYS: enc='%s' (format %s)",
+            TVOS_AUDIO_DIAG("[RSD_TRUTH] #%u GAME CODE SAYS: enc='%s' (format %s)",
                     s_fileOpenCount, gameEncName,
                     m_refIRadSoundHalAudioFormat ? "PRE-SET" : "will read");
             
             // Flag mismatch - this is the smoking gun!
             if (m_refIRadSoundHalAudioFormat != NULL) {
                 if (headerBytes[4] == 'G' && headerBytes[5] == 'A') {
-                    SDL_Log("[RSD_TRUTH] #%u *** MISMATCH! File is GCNADPCM but game says %s ***",
+                    TVOS_AUDIO_DIAG("[RSD_TRUTH] #%u *** MISMATCH! File is GCNADPCM but game says %s ***",
                             s_fileOpenCount, gameEncName);
                 } else if (headerBytes[4] == 'R' && headerBytes[5] == 'A') {
-                    SDL_Log("[RSD_TRUTH] #%u *** MISMATCH! File is RadicalAdpcm but game says %s ***",
+                    TVOS_AUDIO_DIAG("[RSD_TRUTH] #%u *** MISMATCH! File is RadicalAdpcm but game says %s ***",
                             s_fileOpenCount, gameEncName);
                 } else if (headerBytes[4] == 'P' && headerBytes[7] == 'B') {
-                    SDL_Log("[RSD_TRUTH] #%u *** MISMATCH! File is PCM_BIGENDIAN but game says %s ***",
+                    TVOS_AUDIO_DIAG("[RSD_TRUTH] #%u *** MISMATCH! File is PCM_BIGENDIAN but game says %s ***",
                             s_fileOpenCount, gameEncName);
                 }
             }
@@ -417,6 +467,9 @@ void radSoundRsdFileDataSource::_StateOpeningFile( void )
             Log( true, this->fileName, sizeof( radSoundHalFileHeader ) );
     		    
 		    m_refIRadFile->SetPositionAsync( 0 );
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_AUDIO_DIAGNOSTICS )
+			m_diagHeaderReadSubmitUs = radTimeGetMicroseconds64( );
+#endif
 		    m_refIRadFile->ReadAsync(
 			    m_StateInfo.m_ReadingHeaderInfo.m_pRadSoundHalFileHeader,
 			    sizeof( radSoundHalFileHeader ) );
@@ -451,7 +504,14 @@ void radSoundRsdFileDataSource::_StateReadingHeader( void )
 {
 	rAssert(  m_refIRadFile->IsOpen( ) );  // If the file isn't open, we shouldn't be here
 
-#ifdef RAD_TVOS
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_AUDIO_DIAGNOSTICS )
+	if ( m_diagHeaderReadCompleteUs == 0 )
+	{
+		m_diagHeaderReadCompleteUs = radTimeGetMicroseconds64( );
+	}
+#endif
+
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_AUDIO_DIAGNOSTICS )
     // Log the RAW encoding string BEFORE any conversion - this is the ground truth
     static unsigned int s_rsdHeaderCount = 0;
     s_rsdHeaderCount++;
@@ -462,7 +522,7 @@ void radSoundRsdFileDataSource::_StateReadingHeader( void )
     
     // Log first 30 + every 50th
     if (s_rsdHeaderCount <= 30 || (s_rsdHeaderCount % 50) == 0) {
-        SDL_Log("[RSD_HEADER] #%u file='%s' rawEnc='%s' (0x%02x%02x%02x%02x) ch=%u bits=%u rate=%u",
+        TVOS_AUDIO_DIAG("[RSD_HEADER] #%u file='%s' rawEnc='%s' (0x%02x%02x%02x%02x) ch=%u bits=%u rate=%u",
                 s_rsdHeaderCount, fileName,
                 encStr,
                 (unsigned char)hdr->m_SoundDataType[0],
@@ -473,11 +533,11 @@ void radSoundRsdFileDataSource::_StateReadingHeader( void )
         
         // Flag suspicious encodings
         if (hdr->m_SoundDataType[0] == 'G' && hdr->m_SoundDataType[1] == 'A') {
-            SDL_Log("[RSD_HEADER] #%u WARNING: GCNADPCM encoding detected - NEEDS DECODE ON TVOS!",
+            TVOS_AUDIO_DIAG("[RSD_HEADER] #%u WARNING: GCNADPCM encoding detected - NEEDS DECODE ON TVOS!",
                     s_rsdHeaderCount);
         }
         if (hdr->m_SoundDataType[0] == 'P' && hdr->m_SoundDataType[3] == 'B') {
-            SDL_Log("[RSD_HEADER] #%u WARNING: PCM Big-Endian detected - NEEDS BYTE-SWAP ON TVOS!",
+            TVOS_AUDIO_DIAG("[RSD_HEADER] #%u WARNING: PCM Big-Endian detected - NEEDS BYTE-SWAP ON TVOS!",
                     s_rsdHeaderCount);
         }
     }
@@ -536,6 +596,39 @@ void radSoundRsdFileDataSource::InitFile( void )
 
 	m_StateInfo.m_State = StateInfo::IDLE;
 
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_AUDIO_DIAGNOSTICS )
+	if ( !m_diagEmittedFileReadyLog && m_diagT0 != 0 )
+	{
+		m_diagEmittedFileReadyLog = true;
+		const radTime64 nowUs = radTimeGetMicroseconds64( );
+		const unsigned long long tFirstGs =
+		    m_diagFirstGetStateUs != 0
+		        ? static_cast<unsigned long long>( m_diagFirstGetStateUs - m_diagT0 )
+		        : 0ULL;
+		const unsigned long long tOpen =
+		    ( m_diagOpenSubmitUs != 0 && m_diagOpenCompleteUs != 0 )
+		        ? static_cast<unsigned long long>( m_diagOpenCompleteUs - m_diagOpenSubmitUs )
+		        : 0ULL;
+		const unsigned long long tHdr =
+		    ( m_diagHeaderReadSubmitUs != 0 && m_diagHeaderReadCompleteUs != 0 )
+		        ? static_cast<unsigned long long>( m_diagHeaderReadCompleteUs - m_diagHeaderReadSubmitUs )
+		        : 0ULL;
+		const unsigned long long tToIdle =
+		    static_cast<unsigned long long>( nowUs - m_diagT0 );
+        SRR2::Diagnostics::Tracef(
+            SRR2::Diagnostics::AUDIO_LOAD,
+			"[CLIP_PHASE_RSD] milestone=Buffer_initialize_idle file='%s' "
+			"since_InitFileName_us=%llu first_GetState_delay_us=%llu "
+			"WaitForFileOpen_us=%llu ReadHeader_async_us=%llu preset_format=%d",
+			fileName,
+			tToIdle,
+			tFirstGs,
+			tOpen,
+			tHdr,
+			( m_diagHeaderReadSubmitUs == 0 ) ? 1 : 0 );
+	}
+#endif
+
 	// Skip to the data and include the clients requested start position
 
 	m_refIRadFile->SetPositionAsync( RSD_FILE_DATA_OFFSET + initialPlaybackOffsetInBytes );
@@ -560,7 +653,7 @@ void radSoundRsdFileDataSource::_StateReadingData( void )
 	ref< IRadSoundHalDataSourceCallback > xIRadSoundHalDataSourceCallback = m_refIRadSoundHalDataSourceCallback;
 	m_refIRadSoundHalDataSourceCallback = NULL;
 
-#ifdef RAD_TVOS
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_AUDIO_DIAGNOSTICS )
     // Log file read completion with actual PCM data for mono streams
     static unsigned int s_fileReadCount = 0;
     s_fileReadCount++;
@@ -576,16 +669,43 @@ void radSoundRsdFileDataSource::_StateReadingData( void )
         // Also log raw bytes to check endianness
         unsigned char* rawBytes = (unsigned char*)m_StateInfo.m_ReadingDataInfo.m_pReadBuffer;
         
-        SDL_Log("[FILE_RAW] #%u file='%s' frames=%u enc=%d ch=%u rawBytes=[%02x,%02x,%02x,%02x,%02x,%02x,%02x,%02x] samples=[%d,%d,%d,%d]",
+        TVOS_AUDIO_DIAG("[FILE_RAW] #%u file='%s' frames=%u enc=%d ch=%u rawBytes=[%02x,%02x,%02x,%02x,%02x,%02x,%02x,%02x] samples=[%d,%d,%d,%d]",
                 s_fileReadCount, fileName, m_StateInfo.m_ReadingDataInfo.m_ReadSizeInFrames,
                 (int)enc, channels,
                 rawBytes[0], rawBytes[1], rawBytes[2], rawBytes[3],
                 rawBytes[4], rawBytes[5], rawBytes[6], rawBytes[7],
                 samples[0], samples[1], samples[2], samples[3]);
     } else if (s_fileReadCount <= 20 || (s_fileReadCount % 100) == 0) {
-        SDL_Log("[FILE_READ] #%u Complete: file='%s' frames=%u enc=%d ch=%u",
+        TVOS_AUDIO_DIAG("[FILE_READ] #%u Complete: file='%s' frames=%u enc=%d ch=%u",
                 s_fileReadCount, fileName, m_StateInfo.m_ReadingDataInfo.m_ReadSizeInFrames,
                 (int)enc, channels);
+    }
+    {
+        radTime64 readEndUs = radTimeGetMicroseconds64( );
+        radTime64 readDeltaUs = readEndUs - m_diagAsyncReadStartUs;
+        SRR2_AudioDiag_RecordReadUs( static_cast<uint64_t>( readDeltaUs ) );
+        if ( s_fileReadCount <= 30 || ( s_fileReadCount % 100 ) == 0 )
+        {
+            TVOS_AUDIO_DIAG(
+                "[AUDIO_TIMING] kind=rsd_read_async file='%s' read_us=%llu frames=%u",
+                fileName,
+                static_cast<unsigned long long>( readDeltaUs ),
+                m_StateInfo.m_ReadingDataInfo.m_ReadSizeInFrames );
+        }
+		++m_diagDataReadCompleteCount;
+		{
+			const unsigned int ord = m_diagDataReadCompleteCount;
+			if ( ord <= 8U || ( ord % 64U ) == 0U )
+			{
+                SRR2::Diagnostics::Tracef(
+                    SRR2::Diagnostics::AUDIO_LOAD,
+					"[CLIP_PHASE_RSD] phase=ReadAsync_completed file='%s' ordinal=%u read_us=%llu frames=%u",
+					fileName,
+					ord,
+					static_cast<unsigned long long>( readDeltaUs ),
+					m_StateInfo.m_ReadingDataInfo.m_ReadSizeInFrames );
+			}
+		}
     }
 #endif
         

@@ -12,7 +12,7 @@
 #include "pch.hpp"
 #include "radicaladpcm.hpp"
 
-#ifdef RAD_TVOS
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_AUDIO_DIAGNOSTICS )
 #if __has_include(<SDL2/SDL.h>)
     #include <SDL2/SDL.h>
 #else
@@ -163,7 +163,7 @@ void DecodeFrames( void* pBufferStart, void * pAdpcmStart, unsigned numAdpcmFram
 {
     rAssert( numChannels < MAX_CHANNELS );
 
-#ifdef RAD_TVOS
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_AUDIO_DIAGNOSTICS )
     s_adpcmDecodeCount++;
     
     // Log first 20 ADPCM decode operations + every 200th after
@@ -175,20 +175,20 @@ void DecodeFrames( void* pBufferStart, void * pAdpcmStart, unsigned numAdpcmFram
         unsigned int pcmBlockSize = numChannels * RADICAL_ADPCM_SAMPLES_PER_FRAME * 2;
         unsigned int totalPcmBytes = pcmBlockSize * numAdpcmFrames;
         
-        SDL_Log("[ADPCM_DEC] #%u DecodeFrames: channels=%u adpcmFrames=%u adpcmBytes=%u -> pcmBytes=%u",
+        TVOS_AUDIO_DIAG("[ADPCM_DEC] #%u DecodeFrames: channels=%u adpcmFrames=%u adpcmBytes=%u -> pcmBytes=%u",
                 s_adpcmDecodeCount, numChannels, numAdpcmFrames, totalAdpcmBytes, totalPcmBytes);
-        SDL_Log("[ADPCM_DEC] #%u Pointers: bufferStart=%p adpcmStart=%p",
+        TVOS_AUDIO_DIAG("[ADPCM_DEC] #%u Pointers: bufferStart=%p adpcmStart=%p",
                 s_adpcmDecodeCount, pBufferStart, pAdpcmStart);
         
         // Check first ADPCM frame header (index and prev sample)
         if (pAdpcmStart && numAdpcmFrames > 0) {
             short* header = (short*)pAdpcmStart;
-            SDL_Log("[ADPCM_DEC] #%u First frame header: index=%d prev=%d",
+            TVOS_AUDIO_DIAG("[ADPCM_DEC] #%u First frame header: index=%d prev=%d",
                     s_adpcmDecodeCount, header[0], header[1]);
             
             // Check if header values look valid
             if (header[0] < 0 || header[0] > 88) {
-                SDL_Log("[ADPCM_DEC] #%u WARNING: index=%d out of valid range [0-88] - POSSIBLE ENDIAN ISSUE!",
+                TVOS_AUDIO_DIAG("[ADPCM_DEC] #%u WARNING: index=%d out of valid range [0-88] - POSSIBLE ENDIAN ISSUE!",
                         s_adpcmDecodeCount, header[0]);
             }
         }
@@ -275,7 +275,7 @@ void DecodeFrames( void* pBufferStart, void * pAdpcmStart, unsigned numAdpcmFram
         }
     }
 
-#ifdef RAD_TVOS
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_AUDIO_DIAGNOSTICS )
     // Log decoded PCM output quality
     if (shouldLog) {
         short* pcmOutput = (short*)pBufferStart;
@@ -283,7 +283,7 @@ void DecodeFrames( void* pBufferStart, void * pAdpcmStart, unsigned numAdpcmFram
         
         // Check first few decoded samples
         if (pcmOutput && totalPcmSamples >= 8) {
-            SDL_Log("[ADPCM_DEC] #%u Decoded PCM[0-7]: %d %d %d %d %d %d %d %d",
+            TVOS_AUDIO_DIAG("[ADPCM_DEC] #%u Decoded PCM[0-7]: %d %d %d %d %d %d %d %d",
                     s_adpcmDecodeCount,
                     pcmOutput[0], pcmOutput[1], pcmOutput[2], pcmOutput[3],
                     pcmOutput[4], pcmOutput[5], pcmOutput[6], pcmOutput[7]);
@@ -300,7 +300,7 @@ void DecodeFrames( void* pBufferStart, void * pAdpcmStart, unsigned numAdpcmFram
             bool looksLikeStatic = (range > 60000); // Near full range = likely static
             bool looksLikeSilence = (range < 100);
             
-            SDL_Log("[ADPCM_DEC] #%u PCM range: min=%d max=%d range=%d %s",
+            TVOS_AUDIO_DIAG("[ADPCM_DEC] #%u PCM range: min=%d max=%d range=%d %s",
                     s_adpcmDecodeCount, minSample, maxSample, range,
                     looksLikeStatic ? "STATIC!" : (looksLikeSilence ? "silence" : "normal"));
         }

@@ -28,3 +28,15 @@ Create<daSoundResourceData>("pause_off")
 Create<daSoundResourceData>("locked_out")
     .AddFilename ( "sound/soundfx/optionsmenu/locked_out.rsd", 1.000000f )
     .SetTrim ( 0.600000f );
+Create<daSoundResourceData>("car_stinger")
+    .AddFilename ( "sound/soundfx/optionsmenu/carstinger.rsd", 1.000000f )
+    .SetTrim ( 1.000000f );
+Create<daSoundResourceData>("dialog_stinger")
+    .AddFilename ( "sound/soundfx/optionsmenu/dialogstinger.rsd", 1.000000f )
+    .SetTrim ( 1.000000f );
+Create<daSoundResourceData>("sfx_stinger")
+    .AddFilename ( "sound/soundfx/optionsmenu/sfxstinger.rsd", 1.000000f )
+    .SetTrim ( 1.000000f );
+Create<daSoundResourceData>("music_stinger")
+    .AddFilename ( "sound/soundfx/optionsmenu/musicstinger.rsd", 1.000000f )
+    .SetTrim ( 1.000000f );

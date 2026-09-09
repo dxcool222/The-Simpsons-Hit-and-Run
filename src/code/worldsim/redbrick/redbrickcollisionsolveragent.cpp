@@ -151,6 +151,19 @@ Solving_Answer RedBrickCollisionSolverAgent::TestImpulse(rmt::Vector& impulse, C
 
         //int stophere = 1;
 
+#if defined(RAD_MACOS)
+        // Mild safety net only; vsync restored avg_frame_ms≈17 and knockbacks
+        // dropped to 0. Heavy 0.25 scaling felt mushy/laggy on hits.
+        {
+            const float maxCarCarImpulse = 18000.0f;
+            float mag = impulse.Magnitude();
+            if ( mag > maxCarCarImpulse && mag > 0.0f )
+            {
+                impulse.Scale( maxCarCarImpulse / mag );
+            }
+        }
+#endif
+
         if( ((Vehicle*)(simStateA->mAIRefPointer))->mVehicleType == VT_TRAFFIC )
         {
 

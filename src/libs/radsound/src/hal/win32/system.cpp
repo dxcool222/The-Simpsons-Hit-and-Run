@@ -82,7 +82,7 @@ void AL_APIENTRY PrintOpenALErrors(ALenum source, ALenum type, ALuint id, ALenum
 {
     (void)length;
     (void)userParam;
-    fprintf(stderr, "OpenAL says: source=%u type=%u id=%u severity=%u '%s'\n", source, type, id, severity, message);
+    TVOS_AUDIO_DIAG("OpenAL says: source=%u type=%u id=%u severity=%u '%s'", source, type, id, severity, message);
 }
 
 //============================================================================
@@ -127,7 +127,7 @@ void radSoundHalSystem::Initialize( const SystemDescription & systemDescription 
             0x1996, 1024,   // period_size (OpenAL Soft extension)  
             0
         };
-        SDL_Log("[AUDIO_INIT] OpenAL context with period tuning: periods=4, period_size=1024");
+        TVOS_AUDIO_DIAG("[AUDIO_INIT] OpenAL context with period tuning: periods=4, period_size=1024");
 #else
         ALCint attr[] = {
             ALC_FREQUENCY, (ALCint)systemDescription.m_SamplingRate,
@@ -158,8 +158,8 @@ void radSoundHalSystem::Initialize( const SystemDescription & systemDescription 
                 radMapBufferSOFT = (LPALMAPBUFFERSOFT)alGetProcAddress( "alMapBufferSOFT" );
                 radUnmapBufferSOFT = (LPALUNMAPBUFFERSOFT)alGetProcAddress( "alUnmapBufferSOFT" );
 #ifdef RAD_TVOS
-                SDL_Log("[AUDIO_INIT] AL_SOFTX_map_buffer extension ENABLED - streaming audio uses map buffer");
-                SDL_Log("[AUDIO_INIT] radBufferStorageSOFT=%p radMapBufferSOFT=%p radUnmapBufferSOFT=%p",
+                TVOS_AUDIO_DIAG("[AUDIO_INIT] AL_SOFTX_map_buffer extension ENABLED - streaming audio uses map buffer");
+                TVOS_AUDIO_DIAG("[AUDIO_INIT] radBufferStorageSOFT=%p radMapBufferSOFT=%p radUnmapBufferSOFT=%p",
                         (void*)radBufferStorageSOFT, (void*)radMapBufferSOFT, (void*)radUnmapBufferSOFT);
 #endif
             }
@@ -172,11 +172,12 @@ void radSoundHalSystem::Initialize( const SystemDescription & systemDescription 
                 radMapBufferSOFT = NULL;
                 radUnmapBufferSOFT = NULL;
 #ifdef RAD_TVOS
-                SDL_Log("[AUDIO_INIT] WARNING: AL_SOFTX_map_buffer NOT available!");
-                SDL_Log("[AUDIO_INIT] Streaming audio may not work correctly without this extension");
+                TVOS_AUDIO_DIAG("[AUDIO_INIT] WARNING: AL_SOFTX_map_buffer NOT available!");
+                TVOS_AUDIO_DIAG("[AUDIO_INIT] Streaming audio may not work correctly without this extension");
 #endif
             }
 
+#if !defined( RAD_TVOS ) || defined( RAD_TVOS_AUDIO_DIAGNOSTICS )
             // enable debug messages, as of OpenAL-Soft v1.23.1 this extension has not been released yet
             if (alIsExtensionPresent("AL_EXT_debug"))
             {
@@ -185,6 +186,7 @@ void radSoundHalSystem::Initialize( const SystemDescription & systemDescription 
                 alEnable(alDebugOutputEnum);
                 alDebugMessageCallbackEXT(PrintOpenALErrors, /*userParam*/nullptr);
             }
+#endif
 
             if (m_NumAuxSends > 0 && alcIsExtensionPresent(m_pDevice, "ALC_EXT_EFX"))
             {

@@ -5,6 +5,7 @@
 #include <pddi/gles/gl.hpp>
 #include <pddi/gles/glprog.hpp>
 #include <pddi/gles/glmat.hpp>
+#include <diagnostics/tvosdiagnostics.h>
 
 #include <string>
 #include <vector>
@@ -31,13 +32,31 @@ static void TvosLogUniformGlError( const char* tag )
     {
         GLint prog = 0;
         glGetIntegerv( GL_CURRENT_PROGRAM, &prog );
-        SDL_Log( "TVOS_GL_ERR Uniform %s: 0x%x currentProgram=%d", tag ? tag : "", (unsigned)err, (int)prog );
+        SRR2::Diagnostics::RecordGlError( tag, (uint32_t)err );
+        SRR2::Diagnostics::Errorf(
+            SRR2::Diagnostics::RENDER,
+            "[UNIFORM_GL_ERROR] tag=%s err=0x%x currentProgram=%d",
+            tag ? tag : "",
+            (unsigned)err,
+            (int)prog );
     }
 }
 #endif
 
 static inline void UniformColour(GLint loc, pddiColour c)
 {
+    if ( loc < 0 )
+        return;
+#if defined(RAD_MACOS)
+    // Light/material setters can run on the radLoad worker. That thread has a
+    // shared context for uploads but usually no program bound — skip uniforms.
+    if ( !SDL_GL_GetCurrentContext() )
+        return;
+    GLint prog = 0;
+    glGetIntegerv( GL_CURRENT_PROGRAM, &prog );
+    if ( prog == 0 )
+        return;
+#endif
     glUniform4f(loc, float(c.Red()) / 255, float(c.Green()) / 255, float(c.Blue()) / 255, float(c.Alpha()) / 255);
 }
 
@@ -130,6 +149,17 @@ void pglProgram::SetLightState(int handle, const pddiLight* lightState)
     if( handle >= PDDI_MAX_LIGHTS )
         return;
 
+#if defined(RAD_MACOS)
+    if ( !SDL_GL_GetCurrentContext() )
+        return;
+    {
+        GLint prog = 0;
+        glGetIntegerv( GL_CURRENT_PROGRAM, &prog );
+        if ( prog == 0 )
+            return;
+    }
+#endif
+
     float dir[4];
     switch(lightState->type)
     {
@@ -197,7 +227,10 @@ bool pglProgram::LinkProgram(GLuint vertexShader, GLuint fragmentShader)
         std::vector<GLchar> infoLog(maxLength);
         glGetProgramInfoLog(program, maxLength, &maxLength, &infoLog[0]);
 
-        SDL_Log("Program linking error: %s", infoLog.data());
+        SRR2::Diagnostics::Errorf(
+            SRR2::Diagnostics::RENDER,
+            "[PROGRAM_LINK_FAILED] log=%s",
+            infoLog.data() );
         return false;
     }
     
@@ -236,7 +269,35 @@ bool pglProgram::LinkProgram(GLuint vertexShader, GLuint fragmentShader)
 
 bool pglProgram::CompileShader(GLuint shader, const char* source)
 {
+#if defined(RAD_MACOS)
+    // Convert GLES100 shader text to desktop GLSL 1.20 (strip precision; add #version).
+    std::string macSrc;
+    macSrc.reserve( strlen( source ) + 64 );
+    macSrc += "#version 120\n";
+    const char* p = source;
+    while ( *p )
+    {
+        const char* lineStart = p;
+        while ( *p && *p != '\n' ) ++p;
+        size_t len = (size_t)( p - lineStart );
+        std::string line( lineStart, len );
+        // Drop GLES precision qualifiers (invalid in desktop GLSL 120).
+        if ( line.find( "precision " ) == std::string::npos )
+        {
+            macSrc.append( lineStart, len );
+            if ( *p == '\n' ) macSrc.push_back( '\n' );
+        }
+        else if ( *p == '\n' )
+        {
+            // skip precision line entirely
+        }
+        if ( *p == '\n' ) ++p;
+    }
+    const char* srcPtr = macSrc.c_str();
+    glShaderSource( shader, 1, &srcPtr, 0 );
+#else
     glShaderSource(shader, 1, &source, 0);
+#endif
     glCompileShader(shader);
 
     GLint isCompiled = 0;
@@ -253,7 +314,10 @@ bool pglProgram::CompileShader(GLuint shader, const char* source)
         // We don't need the shader anymore.
         glDeleteShader(shader);
 
-        SDL_Log("Shader compilation error: %s", infoLog.data());
+        SRR2::Diagnostics::Errorf(
+            SRR2::Diagnostics::RENDER,
+            "[SHADER_COMPILE_FAILED] log=%s",
+            infoLog.data() );
         return false;
     }
     return true;

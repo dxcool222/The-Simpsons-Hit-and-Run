@@ -93,6 +93,9 @@ class SoundLoader : public EventListener
         SoundClusterName m_currentCluster;
 };
 
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_AUDIO_DIAGNOSTICS )
+const char* SoundLoader_GetClusterScriptNameForDiagnostics( SoundClusterName name );
+#endif
 
 #endif // SOUNDLOADER_H
 

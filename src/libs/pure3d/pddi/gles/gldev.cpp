@@ -4,6 +4,7 @@
 
 #include <pddi/gles/gl.hpp>
 #include <pddi/gles/gldev.hpp>
+#include <diagnostics/tvosdiagnostics.h>
 #include <pddi/gles/gldisplay.hpp>
 #include <pddi/gles/glcon.hpp>
 #include <pddi/gles/gltex.hpp>
@@ -176,10 +177,10 @@ static pglShaderType DetermineShaderType(const char* name)
        strstr(name, "_lm") ||
        strstr(name, "lambert_lm") || strstr(name, "lightmapped"))
     {
-#ifdef RAD_TVOS
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_RENDER_DIAGNOSTICS )
         static int s_lmCount = 0;
         if(s_lmCount++ < 10)
-            SDL_Log("[GLES_SHADER] Lightmap shader requested: '%s'", name);
+            SRR2::Diagnostics::Tracef(SRR2::Diagnostics::RENDER, "[GLES_SHADER] Lightmap shader requested: '%s'", name);
 #endif
         return PGL_SHADER_LIGHTMAP;
     }
@@ -190,10 +191,10 @@ static pglShaderType DetermineShaderType(const char* name)
        strstr(name, "multi") || strstr(name, "Multi") || strstr(name, "MULTI") ||
        strstr(name, "detail") || strstr(name, "Detail"))
     {
-#ifdef RAD_TVOS
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_RENDER_DIAGNOSTICS )
         static int s_layCount = 0;
         if(s_layCount++ < 10)
-            SDL_Log("[GLES_SHADER] Layered/terrain shader requested: '%s'", name);
+            SRR2::Diagnostics::Tracef(SRR2::Diagnostics::RENDER, "[GLES_SHADER] Layered/terrain shader requested: '%s'", name);
 #endif
         return PGL_SHADER_LAYERED;
     }
@@ -203,10 +204,10 @@ static pglShaderType DetermineShaderType(const char* name)
        strstr(name, "reflect") || strstr(name, "Reflect") ||
        strstr(name, "sphere") || strstr(name, "Sphere"))
     {
-#ifdef RAD_TVOS
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_RENDER_DIAGNOSTICS )
         static int s_envCount = 0;
         if(s_envCount++ < 10)
-            SDL_Log("[GLES_SHADER] Environment shader requested: '%s'", name);
+            SRR2::Diagnostics::Tracef(SRR2::Diagnostics::RENDER, "[GLES_SHADER] Environment shader requested: '%s'", name);
 #endif
         return PGL_SHADER_ENVIRONMENT;
     }
@@ -225,13 +226,12 @@ pddiShader *pglDevice::NewShader(const char* name, const char* aux)
         return NULL;
     }
 
-#ifdef RAD_TVOS
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_RENDER_DIAGNOSTICS )
     // Log first few shader creations for debugging
     static int s_shaderCreateCount = 0;
     if(s_shaderCreateCount++ < 20)
     {
-        SDL_Log("[GLES_SHADER] Created shader '%s' -> type=%d", 
-                name ? name : "(null)", (int)shaderType);
+        SRR2::Diagnostics::RecordShaderCreate( name ? name : "(null)", (int)shaderType );
     }
 #endif
 
@@ -250,4 +250,3 @@ void pglDevice::AddCustomShader(const char* name, const char* aux)
 void pglDevice::Release(void)
 {
 }
-

@@ -18,6 +18,7 @@
 
 #include <radobject.hpp>
 #include <raddebug.hpp>
+#include <radkey.hpp>
 
 #include <sound/soundrenderer/soundsystem.h>
 #include <sound/soundrenderer/soundplayer.h>
@@ -31,6 +32,11 @@
 
 #include <sound/soundmanager.h>
 #include <memory/srrmemory.h>
+
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_AUDIO_DIAGNOSTICS )
+#include <sound/diagnostics/audioloaddiag.hpp>
+#include <string.h>
+#endif
 
 //=============================================================================
 // Static Variables
@@ -467,6 +473,24 @@ void daSoundResourceData::CaptureResource( void )
         Sound::daSoundResourceManager::GetInstance( )->
             AllocateResource( this );
     }
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_AUDIO_DIAGNOSTICS )
+    {
+        char keyBuf[64];
+        keyBuf[0] = '\0';
+        radKey32 resourceKey = 0;
+        if ( m_NumFiles > 0 && m_pFileIds != NULL )
+        {
+            resourceKey = m_pFileIds[0].m_Key;
+            GetFileKeyAt( 0, keyBuf, sizeof( keyBuf ) );
+        }
+        AudioLoadDiag::LogResourceCapture(
+            reinterpret_cast< IDaSoundResource* >( this ),
+            resourceKey,
+            keyBuf,
+            GetStreaming( ),
+            wasCaptured );
+    }
+#endif
 }
 
 //=============================================================================

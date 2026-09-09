@@ -73,6 +73,9 @@
 
 #include <debug/debuginfo.h>
 
+#if defined(RAD_TVOS)
+#include <diagnostics/tvosdiagnostics.h>
+#endif
 
 #include <ai/actionbuttonhandler.h>
 #include <ai/actionbuttonmanager.h>
@@ -2477,6 +2480,37 @@ float Vehicle::GetGroundY()
 //=============================================================================
 void Vehicle::PostSubstepUpdate(float dt)
 {
+#if defined(RAD_MACOS) && defined(RAD_TVOS)
+    // Evidence logger for "car shoved far back" hits — not a fix yet.
+    if( mVehicleType == VT_USER && dt > 0.0f )
+    {
+        static rmt::Vector s_prevVel( 0.0f, 0.0f, 0.0f );
+        static float s_prevSpeed = 0.0f;
+        static bool s_havePrev = false;
+
+        const float speed = mVelocityCM.Magnitude();
+        if( s_havePrev )
+        {
+            rmt::Vector dV = mVelocityCM;
+            dV.Sub( s_prevVel );
+            const float dVMag = dV.Magnitude();
+            const float dSpeed = speed - s_prevSpeed;
+            // ~15 m/s instantaneous change ≈ hard knockback
+            if( dVMag > 15.0f )
+            {
+                const float alongFacing = mVehicleFacing.DotProduct( dV );
+                SRR2::Diagnostics::Anomalyf(
+                    SRR2::Diagnostics::COLLISION_AUDIO,
+                    "[VEHICLE_KNOCKBACK] dV=%.2f dSpeed=%.2f alongFacing=%.2f speed=%.2f prevSpeed=%.2f dt=%.4f gas=%.2f brake=%.2f",
+                    dVMag, dSpeed, alongFacing, speed, s_prevSpeed, dt, mGas, mBrake );
+            }
+        }
+        s_prevVel = mVelocityCM;
+        s_prevSpeed = speed;
+        s_havePrev = true;
+    }
+#endif
+
     //-------------------
     // reset input values
     //-------------------

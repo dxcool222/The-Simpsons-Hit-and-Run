@@ -25,9 +25,14 @@
 
 #include <radprofiler.hpp>
 #include "binkrenderstrategy.hpp"
+#include <diagnostics/tvosdiagnostics.h>
 
 #ifdef RAD_TVOS
+#if defined(RAD_MACOS)
+#include <pddi/gles/gl.hpp>
+#else
 #include <OpenGLES/ES2/gl.h>
+#endif
 #if __has_include(<SDL2/SDL.h>)
     #include <SDL2/SDL.h>
 #else
@@ -42,19 +47,19 @@ static bool s_VideoRenderDiagnosticsDone = false;
 static bool VideoCheckTextureData( tTexture* tex, unsigned int tileIdx, unsigned int videoW, unsigned int videoH )
 {
     if ( !tex ) {
-        SDL_Log( "[VIDEO_DIAG] ERROR: Tile %u texture is NULL!", tileIdx );
+        SRR2::Diagnostics::Errorf( SRR2::Diagnostics::VIDEO, "[VIDEO_DIAG] ERROR: Tile %u texture is NULL!", tileIdx );
         return false;
     }
     
     pddiTexture* pddiTex = tex->GetTexture();
     if ( !pddiTex ) {
-        SDL_Log( "[VIDEO_DIAG] ERROR: Tile %u pddiTexture is NULL!", tileIdx );
+        SRR2::Diagnostics::Errorf( SRR2::Diagnostics::VIDEO, "[VIDEO_DIAG] ERROR: Tile %u pddiTexture is NULL!", tileIdx );
         return false;
     }
     
     pddiLockInfo* lockInfo = pddiTex->Lock( 0, NULL );
     if ( !lockInfo || !lockInfo->bits ) {
-        SDL_Log( "[VIDEO_DIAG] ERROR: Tile %u cannot lock texture!", tileIdx );
+        SRR2::Diagnostics::Errorf( SRR2::Diagnostics::VIDEO, "[VIDEO_DIAG] ERROR: Tile %u cannot lock texture!", tileIdx );
         return false;
     }
     
@@ -75,9 +80,11 @@ static bool VideoCheckTextureData( tTexture* tex, unsigned int tileIdx, unsigned
         firstRowPtr = (unsigned char*)lockInfo->bits;
     }
     
-    SDL_Log( "[VIDEO_DIAG] Tile %u: texSize=%dx%d videoSize=%ux%u pitch=%d",
+    SRR2::Diagnostics::Tracef( SRR2::Diagnostics::VIDEO,
+             "[VIDEO_DIAG] Tile %u: texSize=%dx%d videoSize=%ux%u pitch=%d",
              tileIdx, width, height, videoW, videoH, pitch );
-    SDL_Log( "[VIDEO_DIAG] Tile %u: lockBits=%p firstRow=%p",
+    SRR2::Diagnostics::Tracef( SRR2::Diagnostics::VIDEO,
+             "[VIDEO_DIAG] Tile %u: lockBits=%p firstRow=%p",
              tileIdx, lockInfo->bits, (void*)firstRowPtr );
     
     // Sample from the ACTUAL video data area (first rows, not last rows)
@@ -105,13 +112,21 @@ static bool VideoCheckTextureData( tTexture* tex, unsigned int tileIdx, unsigned
         unsigned int cx = videoW / 2;
         unsigned int cy = videoH / 2;
         unsigned char* centerPixel = firstRowPtr + cy * positivePitch + cx * 4;
-        SDL_Log( "[VIDEO_DIAG] Tile %u CENTER pixel (%u,%u): BGRA=(%u,%u,%u,%u)",
+        SRR2::Diagnostics::Tracef( SRR2::Diagnostics::VIDEO,
+                 "[VIDEO_DIAG] Tile %u CENTER pixel (%u,%u): BGRA=(%u,%u,%u,%u)",
                  tileIdx, cx, cy, centerPixel[0], centerPixel[1], centerPixel[2], centerPixel[3] );
     }
     
     pddiTex->Unlock( 0 );
     
-    SDL_Log( "[VIDEO_DIAG] Tile %u: allBlack=%s nonZero=%u sample=RGBA(%u,%u,%u,%u)",
+    if ( allBlack )
+    {
+        SRR2::Diagnostics::Anomalyf( SRR2::Diagnostics::VIDEO,
+             "[VIDEO_BLACK_FRAME] tile=%u nonZero=%u sample=RGBA(%u,%u,%u,%u)",
+             tileIdx, nonZeroCount, sampleR, sampleG, sampleB, sampleA );
+    }
+    SRR2::Diagnostics::Tracef( SRR2::Diagnostics::VIDEO,
+             "[VIDEO_DIAG] Tile %u: allBlack=%s nonZero=%u sample=RGBA(%u,%u,%u,%u)",
              tileIdx, allBlack ? "YES_BAD" : "NO_GOOD", nonZeroCount,
              sampleR, sampleG, sampleB, sampleA );
     
@@ -283,6 +298,20 @@ void radMovieRenderStrategyBink::ChangeParameters( unsigned int width, unsigned 
         {
             for( unsigned int x = 0; x < horizontalTiles; x++ )
             {
+                const unsigned int tilePosX = x * RMV_TEXTURE_MAX_TEX_DIM;
+                const unsigned int tilePosY = y * RMV_TEXTURE_MAX_TEX_DIM;
+                unsigned int tileWidth = RMV_TEXTURE_MAX_TEX_DIM;
+                unsigned int tileHeight = RMV_TEXTURE_MAX_TEX_DIM;
+
+                if ( tilePosX + tileWidth > m_MovieWidth )
+                {
+                    tileWidth = m_MovieWidth - tilePosX;
+                }
+                if ( tilePosY + tileHeight > m_MovieHeight )
+                {
+                    tileHeight = m_MovieHeight - tilePosY;
+                }
+
                 if( m_pTile[ tileIndex ].m_pTexture != NULL )
                 {
                     m_pTile[ tileIndex ].m_pTexture->Release( );
@@ -299,7 +328,9 @@ void radMovieRenderStrategyBink::ChangeParameters( unsigned int width, unsigned 
                 
                 #if RAD_VITAGL
                 bool wasTextureCreated = m_pTile[ tileIndex ].m_pTexture->Create( m_MovieWidth, m_MovieHeight, RMV_TEXTURE_BITDEPTH, 0, 0, PDDI_TEXTYPE_YUV );
-                #elif defined( RAD_WIN32 ) || defined( RAD_TVOS )
+                #elif defined( RAD_TVOS )
+                bool wasTextureCreated = m_pTile[ tileIndex ].m_pTexture->Create( tileWidth, tileHeight, RMV_TEXTURE_BITDEPTH, 8, 0, PDDI_TEXTYPE_RGB );
+                #elif defined( RAD_WIN32 )
                 bool wasTextureCreated = m_pTile[ tileIndex ].m_pTexture->Create( RMV_TEXTURE_MAX_TEX_DIM, RMV_TEXTURE_MAX_TEX_DIM, RMV_TEXTURE_BITDEPTH, 8, 0, PDDI_TEXTYPE_RGB );
                 #elif RAD_XBOX
                 bool wasTextureCreated = m_pTile[ tileIndex ].m_pTexture->Create( m_MovieWidth, m_MovieHeight, RMV_TEXTURE_BITDEPTH, 0, 0, PDDI_TEXTYPE_LINEAR );
@@ -314,26 +345,10 @@ void radMovieRenderStrategyBink::ChangeParameters( unsigned int width, unsigned 
                 m_pTile[ tileIndex ].m_pTexture->GetTexture()->SetVideoTexture( true );
                 #endif
 
-                m_pTile[ tileIndex ].m_PosX = x * RMV_TEXTURE_MAX_TEX_DIM;
-                m_pTile[ tileIndex ].m_PosY = y * RMV_TEXTURE_MAX_TEX_DIM;
-                
-                if( ( x + 1 ) * RMV_TEXTURE_MAX_TEX_DIM > m_MovieWidth )
-                {
-                    m_pTile[ tileIndex ].m_Width = m_MovieWidth % RMV_TEXTURE_MAX_TEX_DIM;
-                }
-                else
-                {
-                    m_pTile[ tileIndex ].m_Width = RMV_TEXTURE_MAX_TEX_DIM;
-                }
-
-                if( ( y + 1 ) * RMV_TEXTURE_MAX_TEX_DIM > m_MovieHeight )
-                {
-                    m_pTile[ tileIndex ].m_Height = m_MovieHeight % RMV_TEXTURE_MAX_TEX_DIM;
-                }
-                else
-                {
-                    m_pTile[ tileIndex ].m_Height = RMV_TEXTURE_MAX_TEX_DIM;
-                }
+                m_pTile[ tileIndex ].m_PosX = tilePosX;
+                m_pTile[ tileIndex ].m_PosY = tilePosY;
+                m_pTile[ tileIndex ].m_Width = tileWidth;
+                m_pTile[ tileIndex ].m_Height = tileHeight;
 
                 tileIndex++;
             }
@@ -356,31 +371,33 @@ bool radMovieRenderStrategyBink::Render( void )
     if ( !s_VideoRenderDiagnosticsDone && s_RenderStrategyDrawCount >= 3 ) {
         s_VideoRenderDiagnosticsDone = true;
         
-        SDL_Log( "========================================================" );
-        SDL_Log( "[VIDEO_DIAG] *** DIAGNOSTIC REPORT - FRAME %u ***", s_RenderStrategyDrawCount );
-        SDL_Log( "========================================================" );
+        SRR2::Diagnostics::Checkpointf( SRR2::Diagnostics::VIDEO,
+            "[VIDEO_DIAG] diagnostic_report frame=%u", s_RenderStrategyDrawCount );
         
         // Check 1: Basic parameters
-        SDL_Log( "[VIDEO_DIAG] NumTiles=%u MovieSize=%ux%u DisplayMult=%.2f Pos=(%d,%d)",
+        SRR2::Diagnostics::Tracef( SRR2::Diagnostics::VIDEO,
+                 "[VIDEO_DIAG] NumTiles=%u MovieSize=%ux%u DisplayMult=%.2f Pos=(%d,%d)",
                  m_NumTiles, m_MovieWidth, m_MovieHeight, 
                  m_DisplayMultiplier, m_MoviePosX, m_MoviePosY );
-        SDL_Log( "[VIDEO_DIAG] Display=%dx%d", 
+        SRR2::Diagnostics::Tracef( SRR2::Diagnostics::VIDEO,
+                 "[VIDEO_DIAG] Display=%dx%d",
                  p3d::display->GetWidth(), p3d::display->GetHeight() );
         
         // Check 2: Shader validity
         if ( m_pShader == NULL ) {
-            SDL_Log( "[VIDEO_DIAG] CRITICAL ERROR: m_pShader is NULL!" );
+            SRR2::Diagnostics::Errorf( SRR2::Diagnostics::VIDEO, "[VIDEO_DIAG] CRITICAL ERROR: m_pShader is NULL!" );
         } else {
             pddiShader* pddiShd = m_pShader->GetShader();
-            SDL_Log( "[VIDEO_DIAG] Shader: tShader=%p pddiShader=%p", 
+            SRR2::Diagnostics::Tracef( SRR2::Diagnostics::VIDEO,
+                     "[VIDEO_DIAG] Shader: tShader=%p pddiShader=%p",
                      (void*)m_pShader, (void*)pddiShd );
         }
         
         // Check 3: Tile textures - ARE THEY BLACK?
-        SDL_Log( "[VIDEO_DIAG] --- TEXTURE DATA CHECK ---" );
         for ( unsigned int t = 0; t < m_NumTiles; t++ ) {
             tTexture* tex = m_pTile[t].m_pTexture;
-            SDL_Log( "[VIDEO_DIAG] Tile %u: tTexture=%p pos=(%u,%u) size=(%u,%u)",
+            SRR2::Diagnostics::Tracef( SRR2::Diagnostics::VIDEO,
+                     "[VIDEO_DIAG] Tile %u: tTexture=%p pos=(%u,%u) size=(%u,%u)",
                      t, (void*)tex, m_pTile[t].m_PosX, m_pTile[t].m_PosY,
                      m_pTile[t].m_Width, m_pTile[t].m_Height );
             VideoCheckTextureData( tex, t, m_pTile[t].m_Width, m_pTile[t].m_Height );
@@ -392,17 +409,20 @@ bool radMovieRenderStrategyBink::Render( void )
         glGetIntegerv( GL_CURRENT_PROGRAM, &currentProg );
         glGetIntegerv( GL_TEXTURE_BINDING_2D, &boundTex );
         glGetIntegerv( GL_ACTIVE_TEXTURE, &activeTex );
-        SDL_Log( "[VIDEO_DIAG] GL State: FBO=%d Program=%d BoundTex=%d ActiveTexUnit=0x%x",
+        SRR2::Diagnostics::Tracef( SRR2::Diagnostics::VIDEO,
+                 "[VIDEO_DIAG] GL State: FBO=%d Program=%d BoundTex=%d ActiveTexUnit=0x%x",
                  currentFBO, currentProg, boundTex, activeTex );
         
         // Check 5: FBO status
         GLenum fboStatus = glCheckFramebufferStatus( GL_FRAMEBUFFER );
-        SDL_Log( "[VIDEO_DIAG] FBO Status: 0x%x (%s)",
+        if ( fboStatus != GL_FRAMEBUFFER_COMPLETE )
+        {
+            SRR2::Diagnostics::Errorf( SRR2::Diagnostics::VIDEO,
+                "[VIDEO_FBO_INCOMPLETE] status=0x%x", fboStatus );
+        }
+        SRR2::Diagnostics::Tracef( SRR2::Diagnostics::VIDEO,
+                 "[VIDEO_DIAG] FBO Status: 0x%x (%s)",
                  fboStatus, fboStatus == GL_FRAMEBUFFER_COMPLETE ? "COMPLETE" : "INCOMPLETE!" );
-        
-        SDL_Log( "========================================================" );
-        SDL_Log( "[VIDEO_DIAG] *** END DIAGNOSTIC REPORT ***" );
-        SDL_Log( "========================================================" );
     }
     
     // Clear any GL errors before rendering

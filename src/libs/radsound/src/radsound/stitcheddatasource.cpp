@@ -6,7 +6,7 @@
 #include "pch.hpp"
 #include "stitcheddatasource.hpp"
 
-#ifdef RAD_TVOS
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_AUDIO_DIAGNOSTICS )
 #if __has_include(<SDL2/SDL.h>)
     #include <SDL2/SDL.h>
 #else
@@ -287,7 +287,7 @@ void radSoundStitchedDataSource::OnDataSourceFramesLoaded( unsigned int actually
 
     m_LoadOutstanding = false;
 
-#ifdef RAD_TVOS
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_AUDIO_DIAGNOSTICS )
     s_stitchOnLoadCount++;
     // Log data AFTER underlying file read completes for mono streams
     if (m_xIRadSoundHalAudioFormat != NULL && m_xIRadSoundHalAudioFormat->GetNumberOfChannels() == 1 && actuallyRead > 0) {
@@ -303,7 +303,7 @@ void radSoundStitchedDataSource::OnDataSourceFramesLoaded( unsigned int actually
             if (samples[i] > maxVal) maxVal = samples[i];
         }
         
-        SDL_Log("[STITCH_LOAD] #%u POST frames=%u ptr=%p data=[%d,%d,%d,%d,%d,%d,%d,%d] min=%d max=%d",
+        TVOS_AUDIO_DIAG("[STITCH_LOAD] #%u POST frames=%u ptr=%p data=[%d,%d,%d,%d,%d,%d,%d,%d] min=%d max=%d",
                 s_stitchOnLoadCount, actuallyRead, m_pCurrentReadPointer,
                 samples[0], samples[1], samples[2], samples[3],
                 samples[4], samples[5], samples[6], samples[7],
@@ -387,13 +387,13 @@ void radSoundStitchedDataSource::GetFramesAsync
 {
     rAssert( m_xIRadSoundHalDataSourceCallback == NULL );
 
-#ifdef RAD_TVOS
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_AUDIO_DIAGNOSTICS )
     s_stitchGetFramesCount++;
     // Log mono streaming requests
     if (m_xIRadSoundHalAudioFormat != NULL && m_xIRadSoundHalAudioFormat->GetNumberOfChannels() == 1) {
         // Log buffer state BEFORE read
         int16_t* samples = (int16_t*)pBytes;
-        SDL_Log("[STITCH_GET] #%u PRE frames=%u dest=%p ch=%u pre=[%d,%d,%d,%d]",
+        TVOS_AUDIO_DIAG("[STITCH_GET] #%u PRE frames=%u dest=%p ch=%u pre=[%d,%d,%d,%d]",
                 s_stitchGetFramesCount, numberOfFrames, pBytes,
                 m_xIRadSoundHalAudioFormat->GetNumberOfChannels(),
                 samples[0], samples[1], samples[2], samples[3]);

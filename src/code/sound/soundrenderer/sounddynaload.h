@@ -79,6 +79,7 @@ public:
 
     // Track if there are any pending swaps registered.
     static unsigned int GetNumPendingSwaps( void );
+    static bool IsSwapActive( void );
 
     //
     // daSoundDynaLoadRegion
@@ -196,4 +197,3 @@ private:
 
 } // Sound Namespace
 #endif //_SOUNDDYNALOAD_HPP
-

@@ -49,6 +49,10 @@
 
 #include <string.h>
 
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_AUDIO_DIAGNOSTICS )
+#include <sound/diagnostics/audioloaddiag.hpp>
+#endif
+
 #ifdef RAD_GAMECUBE
 #include <dolphin/os.h>
 #endif
@@ -364,6 +368,10 @@ void SoundManager::OnBootupStart()
         return;
     }
 
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_AUDIO_DIAGNOSTICS )
+    AudioLoadDiag::SetPhaseCluster( "boot_on_bootup_start", "pending_frontend_queue" );
+#endif
+
     //
     // Load the RadScript and RadMusic files
     //
@@ -416,6 +424,10 @@ void SoundManager::OnBootupComplete()
         //
         SetAmbienceVolume( GetCalculatedAmbienceVolume() );
     }
+
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_AUDIO_DIAGNOSTICS )
+    AudioLoadDiag::EmitLoadSummaryCheckpoint( "all_boot_audio_scripts_done" );
+#endif
 }
 
 //=============================================================================
@@ -2112,6 +2124,9 @@ void SoundManager::Initialize()
 
 void SoundManager::prepareStartupSounds()
 {
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_AUDIO_DIAGNOSTICS )
+    AudioLoadDiag::SetPhaseCluster( "soundmanager_ctor", "prepare_startup_sfx" );
+#endif
     //
     // Go direct to RadSound to load two sounds that we can 
     // play for bootcheck screens

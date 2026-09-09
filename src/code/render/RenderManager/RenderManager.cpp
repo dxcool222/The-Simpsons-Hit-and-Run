@@ -13,7 +13,7 @@
 //
 //=============================================================================
 
-#define ENABLE_DYNA_AUDIT 1
+#define ENABLE_DYNA_AUDIT 0
 
 //If you want only level 1, do this.
 //#define MS8_PANIC
@@ -105,7 +105,7 @@
 //==============================================================================
 // PHASE 0: Lisa's School Split-Load Audit (toggle ON/OFF here)
 //==============================================================================
-bool gAuditDyna = true;  // <<< TOGGLE: set false to disable all audit logs
+bool gAuditDyna = false;
 
 // Case-insensitive substring check
 static bool StrIContains(const char* haystack, const char* needle) {
@@ -230,10 +230,13 @@ static void AuditPrintParseDone() {
 }
 //==============================================================================
 
+#ifndef RAD_TVOS_ZONE_PIPELINE_LOG
+#define RAD_TVOS_ZONE_PIPELINE_LOG 0
+#endif
 //==============================================================================
-// TIMELINE LOGGING: Surgical logging for l1z3.p3d pipeline diagnosis
+// Optional [TL:…] zone pipeline traces (off by default; set to 1 to enable).
 //==============================================================================
-#ifdef RAD_TVOS
+#if defined(RAD_TVOS) && RAD_TVOS_ZONE_PIPELINE_LOG
 extern unsigned int gTimelineFrame;  // Defined in WorldRenderLayer.cpp
 static inline bool IsTimelineZone(const char* name) {
     if (!name) return false;
@@ -1224,8 +1227,7 @@ void RenderManager::OnProcessRequestsComplete( void* pUserData )
         static char spSomeDamnFile[128];
         int i = ((*(int*)pUserData) & RenderEnums::ZoneMask) >> RenderEnums::ZoneShift;
 
-#ifdef RAD_TVOS
-        // TIMELINE STAGE 3: Async completion callback
+#if defined(RAD_TVOS) && RAD_TVOS_ZONE_PIPELINE_LOG
         {
             const char* zoneName = (i < mpZEL->GetNumLoadZones()) ? mpZEL->GetLoadZone(i) : "UNKNOWN";
             if (IsTimelineZone(zoneName)) {
@@ -1590,8 +1592,7 @@ void RenderManager::ThawFromPresentation( void )
 //========================================================================
 void RenderManager::HandleEvent( EventEnum id, void* pEventData )
 {
-#ifdef RAD_TVOS
-   // TIMELINE: Increment frame counter on each zone-related event
+#if defined(RAD_TVOS) && RAD_TVOS_ZONE_PIPELINE_LOG
    if (id == (EVENT_LOCATOR + LocatorEvent::DYNAMIC_ZONE)) {
        gTimelineFrame++;
    }
@@ -1787,8 +1788,7 @@ END_PROFILE( "RenderManager HandleEvent" );
             tName GiveItAFuckinName;
 
             rReleasePrintf("Encountered Dynamic Zone:\n");
-#ifdef RAD_TVOS
-            // TIMELINE STAGE 0: Zone trigger received - check if l1z3/l1z1 is in load list
+#if defined(RAD_TVOS) && RAD_TVOS_ZONE_PIPELINE_LOG
             {
                 rmt::Vector playerPos(0,0,0);
                 Avatar* avatar = GetAvatarManager()->GetAvatarForPlayer(0);
@@ -1798,7 +1798,6 @@ END_PROFILE( "RenderManager HandleEvent" );
                 rmt::Vector trigPos;
                 mpZEL->GetLocation(&trigPos);
                 
-                // Check if any timeline zones are in this trigger's load list
                 bool foundL1Z3 = false;
                 bool foundL1Z1 = false;
                 for(int z=0; z<mpZEL->GetNumLoadZones(); z++) {
@@ -1807,14 +1806,12 @@ END_PROFILE( "RenderManager HandleEvent" );
                     if (zn && (strstr(zn, "l1z1") || strstr(zn, "L1Z1"))) foundL1Z1 = true;
                 }
                 
-                // Log timeline entry for any trigger that CONTAINS l1z3 or l1z1
                 if (foundL1Z3 || foundL1Z1) {
                     printf("[TL:%s] F%u STAGE0_TRIGGER_RECV triggerName='%s' trigPos=(%.1f,%.1f,%.1f) playerPos=(%.1f,%.1f,%.1f)\n",
                         foundL1Z3 ? "L1Z3" : "L1Z1", gTimelineFrame, mpZEL->GetName() ? mpZEL->GetName() : "NULL",
                         trigPos.x, trigPos.y, trigPos.z, playerPos.x, playerPos.y, playerPos.z);
                     printf("[TL:%s] F%u STAGE0_TRIGGER_ZONES numDump=%d numLoad=%d foundL1Z3=%d foundL1Z1=%d\n",
                         foundL1Z3 ? "L1Z3" : "L1Z1", gTimelineFrame, mpZEL->GetNumDumpZones(), mpZEL->GetNumLoadZones(), foundL1Z3, foundL1Z1);
-                    // Dump complete load list for timeline zones
                     for(int z=0; z<mpZEL->GetNumLoadZones(); z++) {
                         const char* zn = mpZEL->GetLoadZone(z);
                         printf("[TL:%s] F%u   loadList[%d]='%s'\n", foundL1Z3 ? "L1Z3" : "L1Z1", gTimelineFrame, z, zn ? zn : "NULL");
@@ -1822,7 +1819,6 @@ END_PROFILE( "RenderManager HandleEvent" );
                     fflush(stdout);
                 }
                 
-                // Also log a summary every N triggers to track l1z3 never appearing
                 static int sZoneTriggerCount = 0;
                 sZoneTriggerCount++;
                 if (sZoneTriggerCount <= 20 || foundL1Z3 || foundL1Z1) {
@@ -1889,8 +1885,7 @@ BEGIN_PROFILE( "Find Load Zone" );
                   HeapMgr()->PopHeap ( GMA_TEMP );
 
                   alreadyLoaded= ! mpRenderLayers[RenderEnums::LevelSlot]->DoPreDynaLoad(GiveItAFuckinName);
-#ifdef RAD_TVOS
-                  // TIMELINE: Log DoPreDynaLoad decision for timeline zones
+#if defined(RAD_TVOS) && RAD_TVOS_ZONE_PIPELINE_LOG
                   {
                       const char* zn = mpZEL->GetLoadZone(i);
                       if (IsTimelineZone(zn)) {
@@ -1915,8 +1910,7 @@ END_PROFILE( "Find Load Zone" );
 #else
                sprintf(spSomeDamnFile,"art\\%s",mpZEL->GetLoadZone(i));
 #endif
-#ifdef RAD_TVOS
-               // TIMELINE: Log file path for timeline zones
+#if defined(RAD_TVOS) && RAD_TVOS_ZONE_PIPELINE_LOG
                {
                    const char* zoneName = mpZEL->GetLoadZone(i);
                    if (IsTimelineZone(zoneName)) {
@@ -1962,8 +1956,7 @@ BEGIN_PROFILE( "Add Requests Int" );
                     gAuditCurrentFile = mpZEL->GetLoadZone(i);
                     AuditResetCounters();
                 }
-#ifdef RAD_TVOS
-                // TIMELINE STAGE 2: AddRequest - file enqueued for loading
+#if defined(RAD_TVOS) && RAD_TVOS_ZONE_PIPELINE_LOG
                 {
                     const char* zoneName = mpZEL->GetLoadZone(i);
                     if (IsTimelineZone(zoneName)) {

@@ -8,6 +8,11 @@
 #include "streamplayer.hpp"
 
 #ifdef RAD_TVOS
+#include "../hal/win32/buffer.hpp"
+static const unsigned int TVOS_MONO_STREAM_BUFFER_MS = 500;
+#endif
+
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_AUDIO_DIAGNOSTICS )
 #if __has_include(<SDL2/SDL.h>)
     #include <SDL2/SDL.h>
 #else
@@ -181,6 +186,21 @@ void radSoundStreamPlayer::AllocateResources( IRadSoundHalAudioFormat * pIRadSou
 	unsigned int sizeInFrames = pIRadSoundHalAudioFormat->ConvertSizeType(
 		IRadSoundHalAudioFormat::Frames, m_InitializeInfo_Size, m_InitializeInfo_SizeType );
 
+#ifdef RAD_TVOS
+    if (pIRadSoundHalAudioFormat->GetNumberOfChannels() == 1)
+    {
+        unsigned int monoQueueFrames = pIRadSoundHalAudioFormat->ConvertSizeType(
+            IRadSoundHalAudioFormat::Frames,
+            TVOS_MONO_STREAM_BUFFER_MS,
+            IRadSoundHalAudioFormat::Milliseconds );
+
+        if (sizeInFrames > monoQueueFrames)
+        {
+            sizeInFrames = monoQueueFrames;
+        }
+    }
+#endif
+
     unsigned int optimalFrameMultiple = pIRadSoundHalAudioFormat->BytesToFrames(
         radSoundHalDataSourceReadMultipleGet( ) );
 
@@ -223,7 +243,7 @@ void radSoundStreamPlayer::AllocateResources( IRadSoundHalAudioFormat * pIRadSou
 
 void radSoundStreamPlayer::Play( void )
 {
-#ifdef RAD_TVOS
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_AUDIO_DIAGNOSTICS )
     s_streamPlayCount++;
     
     // Log first 30 stream plays + every 50th after
@@ -234,7 +254,7 @@ void radSoundStreamPlayer::Play( void )
                                 (m_State == IRadSoundStreamPlayer::Paused) ? "Paused" :
                                 (m_State == IRadSoundStreamPlayer::Playing) ? "Playing" : "?";
         
-        SDL_Log("[STREAM_PLAY] #%u Play: state=%s name='%s'",
+        TVOS_AUDIO_DIAG("[STREAM_PLAY] #%u Play: state=%s name='%s'",
                 s_streamPlayCount, stateName,
                 m_xIRadString_Name ? m_xIRadString_Name->GetChars() : "?");
         
@@ -244,7 +264,7 @@ void radSoundStreamPlayer::Play( void )
             if (dsState == IRadSoundHalDataSource::Initialized) {
                 IRadSoundHalAudioFormat* fmt = m_xIRadSoundHalDataSource->GetFormat();
                 if (fmt) {
-                    SDL_Log("[STREAM_PLAY] #%u Format: enc=%s rate=%u ch=%u bits=%u",
+                    TVOS_AUDIO_DIAG("[STREAM_PLAY] #%u Format: enc=%s rate=%u ch=%u bits=%u",
                             s_streamPlayCount, GetStreamEncodingName(fmt->GetEncoding()),
                             fmt->GetSampleRate(), fmt->GetNumberOfChannels(), fmt->GetBitResolution());
                 }
@@ -325,7 +345,7 @@ void radSoundStreamPlayer::SetDataSource( IRadSoundHalDataSource * pIRadSoundHal
 {
     // rDebugPrintf( "SetDataSource: Gl:[%d] Ptr: [0x%x]\n", g_GameLoops, pIRadSoundHalDataSource );
 
-#ifdef RAD_TVOS
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_AUDIO_DIAGNOSTICS )
     s_streamDataSourceCount++;
     
     // Log first 50 data source assignments + every 50th after
@@ -337,20 +357,20 @@ void radSoundStreamPlayer::SetDataSource( IRadSoundHalDataSource * pIRadSoundHal
                                     (dsState == IRadSoundHalDataSource::Initialized) ? "Initialized" :
                                     (dsState == IRadSoundHalDataSource::Error) ? "Error" : "Unknown";
             
-            SDL_Log("[STREAM_SRC] #%u SetDataSource: ptr=%p state=%s name='%s'",
+            TVOS_AUDIO_DIAG("[STREAM_SRC] #%u SetDataSource: ptr=%p state=%s name='%s'",
                     s_streamDataSourceCount, (void*)pIRadSoundHalDataSource, stateName,
                     m_xIRadString_Name ? m_xIRadString_Name->GetChars() : "?");
             
             if (dsState == IRadSoundHalDataSource::Initialized) {
                 IRadSoundHalAudioFormat* fmt = pIRadSoundHalDataSource->GetFormat();
                 if (fmt) {
-                    SDL_Log("[STREAM_SRC] #%u Format: enc=%s rate=%u ch=%u bits=%u",
+                    TVOS_AUDIO_DIAG("[STREAM_SRC] #%u Format: enc=%s rate=%u ch=%u bits=%u",
                             s_streamDataSourceCount, GetStreamEncodingName(fmt->GetEncoding()),
                             fmt->GetSampleRate(), fmt->GetNumberOfChannels(), fmt->GetBitResolution());
                 }
             }
         } else {
-            SDL_Log("[STREAM_SRC] #%u SetDataSource: NULL (clearing)", s_streamDataSourceCount);
+            TVOS_AUDIO_DIAG("[STREAM_SRC] #%u SetDataSource: NULL (clearing)", s_streamDataSourceCount);
         }
     }
 #endif
@@ -358,7 +378,26 @@ void radSoundStreamPlayer::SetDataSource( IRadSoundHalDataSource * pIRadSoundHal
     // Stop and reset the voice.
 
 	StopVoice( false );
-    m_xIRadSoundHalVoice->SetPlaybackPositionInSamples( 0 );
+
+    bool queuedBufferWasReset = false;
+
+#ifdef RAD_TVOS
+    radSoundHalBufferWin* pQueuedBuffer =
+        dynamic_cast< radSoundHalBufferWin* >( m_xIRadSoundHalVoice->GetBuffer( ) );
+
+    if ( pQueuedBuffer != NULL && pQueuedBuffer->UsesBufferQueuing() )
+    {
+        pQueuedBuffer->SetQueuePlaybackRequested( false );
+        pQueuedBuffer->FlushBufferQueue( );
+        pQueuedBuffer->SetLastDataSource( pIRadSoundHalDataSource );
+        queuedBufferWasReset = true;
+    }
+#endif
+
+    if ( queuedBufferWasReset == false )
+    {
+        m_xIRadSoundHalVoice->SetPlaybackPositionInSamples( 0 );
+    }
 
     //
     // Stop and reset the buffer.
@@ -572,6 +611,21 @@ void radSoundStreamPlayer::ServiceStateMachine( void )
     }
     else if ( m_State == IRadSoundStreamPlayer::Paused )
     {
+#ifdef RAD_TVOS
+        radSoundHalBufferWin* pQueuedBuffer =
+            dynamic_cast< radSoundHalBufferWin* >( m_xIRadSoundHalVoice->GetBuffer( ) );
+
+        if ( pQueuedBuffer != NULL && pQueuedBuffer->UsesBufferQueuing() )
+        {
+            if ( pQueuedBuffer->IsQueuePlaybackRequested() == false &&
+                 m_xIRadSoundHalVoice->IsPlaying() )
+            {
+                StopVoice( true );
+            }
+
+            return;
+        }
+#endif
         ServiceLoad( ); // And keep the buffer full even if we are paused.
     }
 }
@@ -642,6 +696,23 @@ bool radSoundStreamPlayer::ServicePlay( void )
     else
     {
         m_LoadSkipLastFrame = false;
+
+#ifdef RAD_TVOS
+        radSoundHalBufferWin* pQueuedBuffer = dynamic_cast< radSoundHalBufferWin* >( pIRshb );
+        if ( pQueuedBuffer != NULL &&
+             pQueuedBuffer->UsesBufferQueuing() &&
+             pQueuedBuffer->IsQueuePlaybackRequested() &&
+             pQueuedBuffer->GetQueuedBufferCount() == 0 &&
+             m_xIRadSoundHalVoice->IsPlaying() == false &&
+             m_xIRadSoundHalDataSource != NULL &&
+             m_xIRadSoundHalDataSource->GetRemainingFrames() == 0 &&
+             m_SourceSamplesPlayed >= sourceSamplesLoaded )
+        {
+            StopVoice( true );
+            SetDataSource( NULL );
+            return false;
+        }
+#endif
     }
     
     m_LastPlaybackPositionInSamples = playbackPositionInSamples;
@@ -851,6 +922,19 @@ void radSoundStreamPlayer::ServiceLoad( void )
                     
                     if ( m_OutstandingLoadSize > 0 )
                     {
+#ifdef RAD_TVOS
+                        radSoundHalBufferWin* pQueuedBuffer =
+                            dynamic_cast< radSoundHalBufferWin* >( m_xIRadSoundHalVoice->GetBuffer( ) );
+
+                        if ( pQueuedBuffer != NULL &&
+                             pQueuedBuffer->UsesBufferQueuing() &&
+                             pQueuedBuffer->HasFreeStreamBuffer() == false )
+                        {
+                            m_OutstandingLoadSize = 0;
+                            m_Full = false;
+                            return;
+                        }
+#endif
 				        m_xIRadSoundHalVoice->GetBuffer( )->LoadAsync(
 					        m_xIRadSoundHalDataSource,
 					        m_WritePositionInFrames,

@@ -35,4 +35,13 @@
 
 #endif // defined RAD_WIN32 || defined RAD_XBOX
 
+#ifndef TVOS_AUDIO_DIAG
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_AUDIO_DIAGNOSTICS )
+    #include <diagnostics/tvosdiagnostics.h>
+    #define TVOS_AUDIO_DIAG(...) SRR2::Diagnostics::AutoLogf(SRR2::Diagnostics::AUDIO_PLAYBACK, __VA_ARGS__)
+#else
+    #define TVOS_AUDIO_DIAG(...) ((void)0)
+#endif
+#endif
+
 #endif // RADSOUND_PCH_HPP

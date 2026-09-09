@@ -19,6 +19,7 @@
     #include <SDL.h>
 #endif
 #include <vector>
+#include <diagnostics/tvosdiagnostics.h>
 
 #include <microprofile.h>
 
@@ -40,25 +41,44 @@ static unsigned int s_tvosVertexCount = 0;
 
 static bool TvosShouldTraceFrame( unsigned int frame )
 {
+#if defined( RAD_TVOS_RENDER_DIAGNOSTICS )
     return ( frame <= 5 ) || ( ( frame % 300 ) == 0 );
+#else
+    (void) frame;
+    return false;
+#endif
 }
 
 static void TvosClearGlErrors( void )
 {
+#if defined( RAD_TVOS_RENDER_DIAGNOSTICS )
     while ( glGetError( ) != GL_NO_ERROR )
     {
     }
+#endif
 }
 
 static bool TvosConsumeAndLogGlError( const char* tag, unsigned int frame )
 {
+#if defined( RAD_TVOS_RENDER_DIAGNOSTICS )
     GLenum err = glGetError( );
     if ( err != GL_NO_ERROR )
     {
-        SDL_Log( "TVOS_GL_ERR %s #%u: 0x%x", tag ? tag : "", frame, (unsigned)err );
+        SRR2::Diagnostics::RecordGlError( tag, (uint32_t)err );
+        SRR2::Diagnostics::Tracef(
+            SRR2::Diagnostics::RENDER,
+            "TVOS_GL_ERR tag=%s frame=%u err=0x%x",
+            tag ? tag : "",
+            frame,
+            (unsigned)err );
         return true;
     }
     return false;
+#else
+    (void) tag;
+    (void) frame;
+    return false;
+#endif
 }
 #endif
 
@@ -380,8 +400,9 @@ pglContext::pglContext(pglDevice* dev, pglDisplay* disp) : pddiBaseContext((pddi
     lightmapProgram[0] = pglProgram::CreateProgram(lightmapVertexShader, lightmapFragShader);
     lightmapProgram[1] = pglProgram::CreateProgram(litLightmapVertexShader, lightmapFragShader);
 
-#ifdef RAD_TVOS
-    SDL_Log("[GLES_INIT] Shader programs created: color=%p/%p texture=%p/%p alphaTest=%p/%p lightmap=%p/%p",
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_RENDER_DIAGNOSTICS )
+    SRR2::Diagnostics::Checkpointf(SRR2::Diagnostics::RENDER,
+            "[GLES_INIT] Shader programs created: color=%p/%p texture=%p/%p alphaTest=%p/%p lightmap=%p/%p",
             (void*)colorProgram[0], (void*)colorProgram[1],
             (void*)textureProgram[0], (void*)textureProgram[1],
             (void*)alphaTestProgram[0], (void*)alphaTestProgram[1],
@@ -439,12 +460,15 @@ void pglContext::BeginFrame()
         GLint vp[4] = { 0, 0, 0, 0 };
         glGetIntegerv( GL_FRAMEBUFFER_BINDING, &fb );
         glGetIntegerv( GL_VIEWPORT, vp );
-        SDL_Log( "TVOS_GL FrameBegin #%u: fb=%d viewport=%d,%d %dx%d", s_tvosFrameCount, (int)fb, (int)vp[0], (int)vp[1], (int)vp[2], (int)vp[3] );
+        SRR2::Diagnostics::Tracef(
+            SRR2::Diagnostics::RENDER,
+            "TVOS_GL FrameBegin #%u fb=%d viewport=%d,%d %dx%d",
+            s_tvosFrameCount, (int)fb, (int)vp[0], (int)vp[1], (int)vp[2], (int)vp[3] );
 
         GLenum err = glGetError( );
         if ( err != GL_NO_ERROR )
         {
-            SDL_Log( "TVOS_GL_ERR BeginFrame #%u: 0x%x", s_tvosFrameCount, (unsigned)err );
+            SRR2::Diagnostics::RecordGlError( "BeginFrame", (uint32_t)err );
         }
     }
 #endif
@@ -453,7 +477,19 @@ void pglContext::BeginFrame()
     static bool s_tvosSwapIntervalSet = false;
     if ( !s_tvosSwapIntervalSet )
     {
-        SDL_GL_SetSwapInterval(display->GetForceVSync() ? 1 : 0);
+        int swapIntervalResult = SDL_GL_SetSwapInterval(display->GetForceVSync() ? 1 : 0);
+#if defined( RAD_TVOS_RENDER_DIAGNOSTICS )
+        if ( swapIntervalResult != 0 )
+        {
+            SRR2::Diagnostics::Anomalyf(
+                SRR2::Diagnostics::RENDER,
+                "[SWAP_INTERVAL_UNSUPPORTED] error=%s",
+                SDL_GetError() );
+        }
+#else
+        (void) swapIntervalResult;
+#endif
+        SDL_ClearError();
         s_tvosSwapIntervalSet = true;
     }
 #else
@@ -493,18 +529,22 @@ void pglContext::EndFrame()
 {
     pddiBaseContext::EndFrame();
 
-#ifdef RAD_TVOS
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_RENDER_DIAGNOSTICS )
     static unsigned int s_endCount = 0;
     s_endCount++;
     if ( ( s_endCount <= 10 ) || ( ( s_endCount % 300 ) == 0 ) )
     {
-        SDL_Log( "TVOS_GL EndFrame #%u: drawCalls=%u verts=%u", s_endCount, s_tvosDrawCallCount, s_tvosVertexCount );
+        SRR2::Diagnostics::Tracef(
+            SRR2::Diagnostics::RENDER,
+            "TVOS_GL EndFrame #%u drawCalls=%u verts=%u",
+            s_endCount, s_tvosDrawCallCount, s_tvosVertexCount );
         GLenum err = glGetError( );
         if ( err != GL_NO_ERROR )
         {
-            SDL_Log( "TVOS_GL_ERR EndFrame #%u: 0x%x", s_endCount, (unsigned)err );
+            SRR2::Diagnostics::RecordGlError( "EndFrame", (uint32_t)err );
         }
     }
+    SRR2::Diagnostics::RecordRenderFrame( s_tvosDrawCallCount, s_tvosVertexCount );
     s_tvosDrawCallCount = 0;
     s_tvosVertexCount = 0;
 #endif
@@ -520,14 +560,16 @@ void pglContext::Clear(unsigned bufferMask)
     myClearMask |= (bufferMask & PDDI_BUFFER_DEPTH) ? GL_DEPTH_BUFFER_BIT : 0;
     //myClearMask |= (bufferMask & PDDI_BUFFER_STENCIL) ? GL_STENCIL_BUFFER_BIT : 0;
 
-#ifdef RAD_TVOS
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_RENDER_DIAGNOSTICS )
     static unsigned int s_clearCount = 0;
     s_clearCount++;
     if ( s_clearCount <= 10 || ( s_clearCount % 300 ) == 0 )
     {
         GLint fb = 0;
         glGetIntegerv( GL_FRAMEBUFFER_BINDING, &fb );
-        SDL_Log( "TVOS_GL Clear #%u: mask=0x%x fb=%d clearColor=(%d,%d,%d,%d)",
+        SRR2::Diagnostics::Tracef(
+                 SRR2::Diagnostics::RENDER,
+                 "TVOS_GL Clear #%u mask=0x%x fb=%d clearColor=(%d,%d,%d,%d)",
                  s_clearCount,
                  (unsigned)myClearMask,
                  (int)fb,
@@ -823,9 +865,11 @@ void pglContext::EndPrims(pddiPrimStream* stream)
     }
 
     glDrawArrays( glstream->primitive, 0, glstream->coords.size() );
-#ifdef RAD_TVOS
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_RENDER_DIAGNOSTICS )
     s_tvosDrawCallCount++;
     s_tvosVertexCount += glstream->coords.size();
+#endif
+#ifdef RAD_TVOS
     if ( trace && !hadErr ) hadErr = TvosConsumeAndLogGlError( "EndPrims.glDrawArrays", frame );
 #endif
 
@@ -845,8 +889,32 @@ public:
         buffer = b;
     }
 
+    bool CanWrite(const char* op)
+    {
+        if(buffer && buffer->total < buffer->allocated)
+        {
+            return true;
+        }
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_RENDER_DIAGNOSTICS )
+        static unsigned int s_oobWriteCount = 0;
+        if(s_oobWriteCount++ < 10)
+        {
+            SRR2::Diagnostics::RecordRejectedDraw( "prim_stream_oob", 1 );
+            SRR2::Diagnostics::Anomalyf(SRR2::Diagnostics::RENDER,
+                    "[PRIM_OOB] stream write skipped op=%s total=%u allocated=%u",
+                    op ? op : "?", buffer ? buffer->total : 0, buffer ? buffer->allocated : 0);
+        }
+#endif
+        return false;
+    }
+
     void Next(void)  
     {
+        if(!CanWrite("Next"))
+        {
+            return;
+        }
+
         if(buffer->coord)
             buffer->coord = (float*)((char*)buffer->coord + buffer->stride);
 
@@ -868,6 +936,8 @@ public:
 
     void Position(float x, float y, float z)  
     { 
+        if(!CanWrite("Position") || !buffer->coord)
+            return;
         buffer->coord[0] = x;
         buffer->coord[1] = y;
         buffer->coord[2] = z;
@@ -876,6 +946,8 @@ public:
 
     void Normal(float x, float y, float z) 
     { 
+        if(!CanWrite("Normal") || !buffer->normal)
+            return;
         buffer->normal[0] = x;
         buffer->normal[1] = y;
         buffer->normal[2] = z;
@@ -884,6 +956,8 @@ public:
     void Colour(pddiColour colour, int channel = 0)         
     {
         // HBW: Multiple CBVs not yet implemented.  For now just ignore channel.
+        if(!CanWrite("Colour") || !buffer->colour)
+            return;
         buffer->colour[0] = colour.Red();
         buffer->colour[1] = colour.Green();
         buffer->colour[2] = colour.Blue();
@@ -894,6 +968,8 @@ public:
 
     void TexCoord2(float u, float v, int channel = 0) 
     { 
+        if(!CanWrite("TexCoord2"))
+            return;
         if(channel == 0 && buffer->uv0)
         {
             buffer->uv0[0] = u;
@@ -904,13 +980,14 @@ public:
             buffer->uv1[0] = u;
             buffer->uv1[1] = v;
         }
-#ifdef RAD_TVOS
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_RENDER_DIAGNOSTICS )
         else if(channel > 1)
         {
             // Log dropped UV channels beyond UV1 (first few occurrences)
             static int s_droppedUVCount = 0;
             if(s_droppedUVCount++ < 10)
-                SDL_Log("[GLES_FMT] UV channel %d dropped (only UV0/UV1 supported)", channel);
+                SRR2::Diagnostics::Anomalyf(SRR2::Diagnostics::RENDER,
+                    "[GLES_FMT] UV channel %d dropped (only UV0/UV1 supported)", channel);
         }
 #endif
     }
@@ -933,6 +1010,8 @@ public:
 
     void Vertex(pddiVector* v, pddiColour c) 
     {
+        if(!CanWrite("VertexPC") || !buffer->coord || !buffer->colour || !v)
+            return;
         buffer->colour[0] = c.Red();
         buffer->colour[1] = c.Green();
         buffer->colour[2] = c.Blue();
@@ -945,6 +1024,8 @@ public:
 
     void Vertex(pddiVector* v, pddiVector* n)
     {
+        if(!CanWrite("VertexPN") || !buffer->coord || !buffer->normal || !v || !n)
+            return;
         buffer->normal[0] = n->x;
         buffer->normal[1] = n->y;
         buffer->normal[2] = n->z;
@@ -956,7 +1037,9 @@ public:
 
     void Vertex(pddiVector* v, pddiVector2* uv)
     {
-        if(buffer->uv0)
+        if(!CanWrite("VertexPT") || !buffer->coord || !v)
+            return;
+        if(buffer->uv0 && uv)
         {
             buffer->uv0[0] = uv->u;
             buffer->uv0[1] = uv->v;
@@ -969,11 +1052,13 @@ public:
 
     void Vertex(pddiVector* v, pddiColour c, pddiVector2* uv)
     {
+        if(!CanWrite("VertexPCT") || !buffer->coord || !buffer->colour || !v)
+            return;
         buffer->colour[0] = c.Red();
         buffer->colour[1] = c.Green();
         buffer->colour[2] = c.Blue();
         buffer->colour[3] = c.Alpha();
-        if(buffer->uv0)
+        if(buffer->uv0 && uv)
         {
             buffer->uv0[0] = uv->u;
             buffer->uv0[1] = uv->v;
@@ -986,10 +1071,12 @@ public:
 
     void Vertex(pddiVector* v, pddiVector* n, pddiVector2* uv)
     {
+        if(!CanWrite("VertexPNT") || !buffer->coord || !buffer->normal || !v || !n)
+            return;
         buffer->normal[0] = n->x;
         buffer->normal[1] = n->y;
         buffer->normal[2] = n->z;
-        if(buffer->uv0)
+        if(buffer->uv0 && uv)
         {
             buffer->uv0[0] = uv->u;
             buffer->uv0[1] = uv->v;
@@ -1008,6 +1095,23 @@ public:
 
 pglPrimBuffer::pglPrimBuffer(pglContext* c, pddiPrimType type, unsigned vertexFormat, int nVertex, int nIndex) : context(c)
 {
+    if(nVertex < 0)
+    {
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_RENDER_DIAGNOSTICS )
+        SRR2::Diagnostics::Errorf(SRR2::Diagnostics::RENDER,
+            "[PRIM_CREATE_CLAMP] negative vertex count=%d", nVertex);
+#endif
+        nVertex = 0;
+    }
+    if(nIndex < 0)
+    {
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_RENDER_DIAGNOSTICS )
+        SRR2::Diagnostics::Errorf(SRR2::Diagnostics::RENDER,
+            "[PRIM_CREATE_CLAMP] negative index count=%d", nIndex);
+#endif
+        nIndex = 0;
+    }
+
     stream = new pglPrimBufferStream(this);
 
     total = allocated = stride = nStrips = 0;
@@ -1102,12 +1206,13 @@ pglPrimBuffer::pglPrimBuffer(pglContext* c, pddiPrimType type, unsigned vertexFo
         stride = 36;
     }
 
-#ifdef RAD_TVOS
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_RENDER_DIAGNOSTICS )
     // Log vertex format info for debugging (first few buffers)
     static int s_bufferCreateCount = 0;
     if(s_bufferCreateCount++ < 20)
     {
-        SDL_Log("[GLES_FMT] PrimBuffer: format=0x%x stride=%u uvCount=%u normal=%d colour=%d",
+        SRR2::Diagnostics::Tracef(SRR2::Diagnostics::RENDER,
+                "[GLES_FMT] PrimBuffer: format=0x%x stride=%u uvCount=%u normal=%d colour=%d",
                 vertexFormat, stride, numUVSets, 
                 (vertexFormat & PDDI_V_NORMAL) ? 1 : 0,
                 (vertexFormat & PDDI_V_COLOUR) ? 1 : 0);
@@ -1143,6 +1248,8 @@ pglPrimBuffer::pglPrimBuffer(pglContext* c, pddiPrimType type, unsigned vertexFo
     }
 
     indexCount = nIndex;
+    indexRangeValidated = false;
+    indexRangeValid = true;
     if(indexCount) 
         indices = new unsigned short[indexCount];
 
@@ -1192,6 +1299,8 @@ void pglPrimBuffer::Unlock(pddiPrimBufferStream* stream)
     if(colour)
         colour -= total * stride;
 
+    indexRangeValidated = false;
+    indexRangeValid = true;
     valid = false;
 }
 
@@ -1208,8 +1317,27 @@ void pglPrimBuffer::UnlockIndexBuffer(int count)
 
 void pglPrimBuffer::SetIndices(unsigned short* i, int count)
 {
-    PDDIASSERT(count <= (int)indexCount);
+    if(i == NULL || indices == NULL || count <= 0)
+    {
+        indexRangeValidated = true;
+        indexRangeValid = (count == 0);
+        valid = false;
+        return;
+    }
+
+    if(count > (int)indexCount)
+    {
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_RENDER_DIAGNOSTICS )
+        SRR2::Diagnostics::Anomalyf(SRR2::Diagnostics::RENDER,
+            "[PRIM_INDEX_CLAMP] requested=%d capacity=%u", count, indexCount);
+#endif
+        count = (int)indexCount;
+    }
+
     memcpy(indices, i, count * sizeof(unsigned short));
+    indexCount = (unsigned)count;
+    indexRangeValidated = false;
+    indexRangeValid = true;
     valid = false;
 }
 
@@ -1230,12 +1358,14 @@ rebuild_attempt:
     if(!buffer || (!total && !indexCount))
     {
         s_skipCount++;
-#ifdef RAD_TVOS
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_RENDER_DIAGNOSTICS )
         unsigned int frame = s_tvosFrameCount;
         // Log every 300 frames if we're skipping geometry
         if(frame >= s_lastSkipLogFrame + 300 && s_skipCount > 0)
         {
-            SDL_Log("[PRIM_SKIP] frame=%u skipped=%u buffer=%p total=%u indexCount=%u", 
+            SRR2::Diagnostics::RecordRejectedDraw( "prim_skip_empty", s_skipCount );
+            SRR2::Diagnostics::Anomalyf(SRR2::Diagnostics::RENDER,
+                    "[PRIM_SKIP] frame=%u skipped=%u buffer=%p total=%u indexCount=%u",
                     frame, s_skipCount, (void*)buffer, total, indexCount);
             s_skipCount = 0;
             s_lastSkipLogFrame = frame;
@@ -1431,8 +1561,10 @@ rebuild_attempt:
     // Final safety check - ensure VAO is valid before drawing
     if(!vertexArray || !vertexBuffer)
     {
-#ifdef RAD_TVOS
-        SDL_Log("[PRIM_INVALID] frame=%u vertexArray=%u vertexBuffer=%u indexBuffer=%u valid=%d",
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_RENDER_DIAGNOSTICS )
+        SRR2::Diagnostics::RecordRejectedDraw( "prim_invalid_buffer", 1 );
+        SRR2::Diagnostics::Anomalyf(SRR2::Diagnostics::RENDER,
+                "[PRIM_INVALID] frame=%u vertexArray=%u vertexBuffer=%u indexBuffer=%u valid=%d",
                 frame, vertexArray, vertexBuffer, indexBuffer, (int)valid);
 #endif
         if(!rebuiltOnce)
@@ -1452,12 +1584,40 @@ rebuild_attempt:
 
     if(indexCount && indices)
     {
+        if(!indexRangeValidated)
+        {
+            unsigned short maxIndex = 0;
+            for(unsigned i = 0; i < indexCount; ++i)
+            {
+                if(indices[i] > maxIndex)
+                {
+                    maxIndex = indices[i];
+                }
+            }
+
+            indexRangeValid = (allocated > 0 && maxIndex < allocated);
+            indexRangeValidated = true;
+        }
+
+        if(!indexRangeValid)
+        {
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_RENDER_DIAGNOSTICS )
+            SRR2::Diagnostics::RecordRejectedDraw( "prim_index_oob", 1 );
+            SRR2::Diagnostics::Errorf(SRR2::Diagnostics::RENDER,
+                "[PRIM_INDEX_OOB] indexCount=%u allocatedVerts=%u", indexCount, allocated);
+#endif
+            glBindVertexArrayOES(0);
+            return;
+        }
+
         // Ensure index buffer is bound (VAO may not have captured it correctly)
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, indexBuffer);
         glDrawElements(primTypeTable[primType],indexCount,GL_UNSIGNED_SHORT,0);
-#ifdef RAD_TVOS
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_RENDER_DIAGNOSTICS )
         s_tvosDrawCallCount++;
         s_tvosVertexCount += indexCount;
+#endif
+#ifdef RAD_TVOS
         if ( trace && !hadErr ) hadErr = TvosConsumeAndLogGlError( "PrimBuffer.glDrawElements", frame );
 #endif
     }
@@ -1465,9 +1625,11 @@ rebuild_attempt:
     {
         if(total)
             glDrawArrays(primTypeTable[primType], 0, total);
-#ifdef RAD_TVOS
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_RENDER_DIAGNOSTICS )
         s_tvosDrawCallCount++;
         s_tvosVertexCount += total;
+#endif
+#ifdef RAD_TVOS
         if ( trace && !hadErr ) hadErr = TvosConsumeAndLogGlError( "PrimBuffer.glDrawArrays", frame );
 #endif
     }
@@ -1492,14 +1654,16 @@ void pglContext::DrawPrimBuffer(pddiShader* mat, pddiPrimBuffer* buffer)
     // Guard against NULL buffer pointer
     if(!buffer)
     {
-#ifdef RAD_TVOS
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_RENDER_DIAGNOSTICS )
         static unsigned int s_nullBufferCount = 0;
         static unsigned int s_lastNullLog = 0;
         s_nullBufferCount++;
         unsigned int frame = s_tvosFrameCount;
         if(frame >= s_lastNullLog + 300)
         {
-            SDL_Log("[DRAW_SKIP] frame=%u nullBuffer=%u", frame, s_nullBufferCount);
+            SRR2::Diagnostics::RecordRejectedDraw( "draw_null_buffer", s_nullBufferCount );
+            SRR2::Diagnostics::Anomalyf(SRR2::Diagnostics::RENDER,
+                "[DRAW_SKIP] frame=%u nullBuffer=%u", frame, s_nullBufferCount);
             s_nullBufferCount = 0;
             s_lastNullLog = frame;
         }
@@ -1769,14 +1933,25 @@ void pglContext::SetShaderProgram(pglProgram* program)
     }
 }
 
+void pglContext::InvalidateShaderProgram()
+{
+    if(currentProgram)
+    {
+        currentProgram->Release();
+        currentProgram = nullptr;
+    }
+}
+
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_RENDER_DIAGNOSTICS )
 // Static counters for shader usage tracking
 static unsigned int s_colorProgramCount = 0;
 static unsigned int s_textureProgramCount = 0;
 static unsigned int s_shaderLogInterval = 0;
+#endif
 
 void pglContext::SetTextureEnvironment(const pglTextureEnv* texEnv)
 {
-#ifdef RAD_TVOS
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_RENDER_DIAGNOSTICS )
     // One-time diagnostic for shader program selection
     static bool s_texEnvDiagDone = false;
     static unsigned int s_texEnvCallCount = 0;
@@ -1784,23 +1959,29 @@ void pglContext::SetTextureEnvironment(const pglTextureEnv* texEnv)
     
     if ( !s_texEnvDiagDone && s_texEnvCallCount > 100 && texEnv->texture ) {
         s_texEnvDiagDone = true;
-        SDL_Log( "========================================================" );
-        SDL_Log( "[SHADER_SELECT] *** SHADER PROGRAM SELECTION DIAGNOSTIC ***" );
-        SDL_Log( "[SHADER_SELECT] texEnv->texture = %p", (void*)texEnv->texture );
-        SDL_Log( "[SHADER_SELECT] texEnv->alphaTest = %d", texEnv->alphaTest ? 1 : 0 );
-        SDL_Log( "[SHADER_SELECT] texEnv->lit = %d", texEnv->lit ? 1 : 0 );
         
         pglProgram* selectedProg = texEnv->alphaTest ? alphaTestProgram[texEnv->lit] : textureProgram[texEnv->lit];
-        SDL_Log( "[SHADER_SELECT] Selected program: %p (textureProgram)", (void*)selectedProg );
-        SDL_Log( "[SHADER_SELECT] colorProgram[0]=%p textureProgram[0]=%p", 
-                 (void*)colorProgram[0], (void*)textureProgram[0] );
-        
         if ( selectedProg == colorProgram[0] || selectedProg == colorProgram[1] ) {
-            SDL_Log( "[SHADER_SELECT] WARNING: Using COLOR program - NO TEXTURE SAMPLING!" );
+            SRR2::Diagnostics::Anomalyf(
+                SRR2::Diagnostics::RENDER,
+                "[SHADER_SELECT] WARNING: Using COLOR program while texture exists tex=%p alphaTest=%d lit=%d selected=%p color0=%p texture0=%p",
+                (void*)texEnv->texture,
+                texEnv->alphaTest ? 1 : 0,
+                texEnv->lit ? 1 : 0,
+                (void*)selectedProg,
+                (void*)colorProgram[0],
+                (void*)textureProgram[0] );
         } else {
-            SDL_Log( "[SHADER_SELECT] OK: Using TEXTURE program - will sample texture" );
+            SRR2::Diagnostics::Tracef(
+                SRR2::Diagnostics::RENDER,
+                "[SHADER_SELECT] tex=%p alphaTest=%d lit=%d selected=%p color0=%p texture0=%p",
+                (void*)texEnv->texture,
+                texEnv->alphaTest ? 1 : 0,
+                texEnv->lit ? 1 : 0,
+                (void*)selectedProg,
+                (void*)colorProgram[0],
+                (void*)textureProgram[0] );
         }
-        SDL_Log( "========================================================" );
     }
     
     // Track shader program usage
@@ -1813,7 +1994,8 @@ void pglContext::SetTextureEnvironment(const pglTextureEnv* texEnv)
     s_shaderLogInterval++;
     if(s_shaderLogInterval >= 18000) // ~5 seconds at 60fps with 300 calls/frame
     {
-        SDL_Log("[SHADER_STATS] textureProgram=%u colorProgram=%u (no-tex geometry)",
+        SRR2::Diagnostics::Summaryf(SRR2::Diagnostics::RENDER,
+                "[SHADER_STATS] textureProgram=%u colorProgram=%u",
                 s_textureProgramCount, s_colorProgramCount);
         s_textureProgramCount = 0;
         s_colorProgramCount = 0;
@@ -1828,10 +2010,11 @@ void pglContext::SetTextureEnvironment(const pglTextureEnv* texEnv)
         {
             // Use lightmap shader for geometry that needs base * lightmap blending
             SetShaderProgram(lightmapProgram[texEnv->lit]);
-#ifdef RAD_TVOS
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_RENDER_DIAGNOSTICS )
             static int s_lightmapUseCount = 0;
             if(s_lightmapUseCount++ < 5)
-                SDL_Log("[GLES_SHADER] Using lightmap program (lit=%d)", texEnv->lit ? 1 : 0);
+                SRR2::Diagnostics::Tracef(SRR2::Diagnostics::RENDER,
+                    "[GLES_SHADER] Using lightmap program (lit=%d)", texEnv->lit ? 1 : 0);
 #endif
         }
         else if(texEnv->alphaTest)

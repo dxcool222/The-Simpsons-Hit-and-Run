@@ -7,12 +7,12 @@ namespace Sound {
 void daSoundRenderingManager::RunSoundEffectScripts( void )
 {
     SetCurrentNameSpace( GetSoundNamespace() );
-    GetSoundManager()->GetSoundLoader()->SetCurrentCluster( SC_ALWAYS_LOADED );
+    GetSoundManager()->GetSoundLoader()->SetCurrentCluster( SC_FRONTEND );
     #include "frontend.inl"
+    GetSoundManager()->GetSoundLoader()->SetCurrentCluster( SC_INGAME );
     #include "collide.inl"
     #include "carsound.inl"
     #include "world.inl"
-    GetSoundManager()->GetSoundLoader()->SetCurrentCluster( SC_INGAME );
     #include "positionalsounds.inl"
 }
 #pragma GCC pop_options

@@ -1,0 +1,8 @@
+{
+	"InstallScripts" : 
+	[
+		"/Volumes/Untitled2/MAC/New project/The-Simpsons-Hit-and-Run-Version-3/MAC_PORT/deps/src/OpenALSoft-build/cmake_install.cmake",
+		"/Volumes/Untitled2/MAC/New project/The-Simpsons-Hit-and-Run-Version-3/MAC_PORT/deps/src/OpenALSoft-build/fmt-11.1.1/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

@@ -7,7 +7,7 @@
 #include <radsoundfile.hpp>
 #include "buffereddatasource.hpp"
 
-#ifdef RAD_TVOS
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_AUDIO_DIAGNOSTICS )
 #if __has_include(<SDL2/SDL.h>)
     #include <SDL2/SDL.h>
 #else
@@ -95,7 +95,7 @@ IRadSoundHalDataSource::State radSoundBufferedDataSource::GetState( void )
 
 void radSoundBufferedDataSource::SetInputDataSource( IRadSoundHalDataSource * pIRshds )
 {
-#ifdef RAD_TVOS
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_AUDIO_DIAGNOSTICS )
     s_bufferedDSSetCount++;
     
     // Log first 50 + every 50th after
@@ -106,20 +106,20 @@ void radSoundBufferedDataSource::SetInputDataSource( IRadSoundHalDataSource * pI
                                     (dsState == IRadSoundHalDataSource::Initialized) ? "Initialized" :
                                     (dsState == IRadSoundHalDataSource::Error) ? "Error" : "Unknown";
             
-            SDL_Log("[BUFFERED_DS] #%u SetInputDataSource: ptr=%p state=%s name='%s'",
+            TVOS_AUDIO_DIAG("[BUFFERED_DS] #%u SetInputDataSource: ptr=%p state=%s name='%s'",
                     s_bufferedDSSetCount, (void*)pIRshds, stateName,
                     m_xIRadString_Name ? m_xIRadString_Name->GetChars() : "?");
             
             if (dsState == IRadSoundHalDataSource::Initialized) {
                 IRadSoundHalAudioFormat* fmt = pIRshds->GetFormat();
                 if (fmt) {
-                    SDL_Log("[BUFFERED_DS] #%u Format: enc=%s rate=%u ch=%u bits=%u",
+                    TVOS_AUDIO_DIAG("[BUFFERED_DS] #%u Format: enc=%s rate=%u ch=%u bits=%u",
                             s_bufferedDSSetCount, GetBDSEncodingName(fmt->GetEncoding()),
                             fmt->GetSampleRate(), fmt->GetNumberOfChannels(), fmt->GetBitResolution());
                 }
             }
         } else {
-            SDL_Log("[BUFFERED_DS] #%u SetInputDataSource: NULL (clearing)", s_bufferedDSSetCount);
+            TVOS_AUDIO_DIAG("[BUFFERED_DS] #%u SetInputDataSource: NULL (clearing)", s_bufferedDSSetCount);
         }
     }
 #endif
@@ -281,7 +281,7 @@ void radSoundBufferedDataSource::OnDataSourceFramesLoaded( unsigned int framesAc
 {
 	rAssert( m_ReadSizeInFrames > 0 );
 
-#ifdef RAD_TVOS
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_AUDIO_DIAGNOSTICS )
     // Verify data was actually read into the buffer
     static unsigned int s_dataLoadedCount = 0;
     s_dataLoadedCount++;
@@ -298,7 +298,7 @@ void radSoundBufferedDataSource::OnDataSourceFramesLoaded( unsigned int framesAc
             if (loadedData[i] < minVal) minVal = loadedData[i];
             if (loadedData[i] > maxVal) maxVal = loadedData[i];
         }
-        SDL_Log("[BUFFERED_DS] #%u OnFramesLoaded: frames=%u buffer=%p offset=%u allZero=%s range=[%u-%u]",
+        TVOS_AUDIO_DIAG("[BUFFERED_DS] #%u OnFramesLoaded: frames=%u buffer=%p offset=%u allZero=%s range=[%u-%u]",
                 s_dataLoadedCount, framesActuallyRead, (void*)m_pFrameBuffer, loadOffset,
                 allZero ? "YES-BAD" : "no", minVal, maxVal);
     }
@@ -454,7 +454,7 @@ void radSoundBufferedDataSource::ServiceCopy( void )
 
 			if ( m_CurrentFramesToCopy > 0 )
 			{
-#ifdef RAD_TVOS
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_AUDIO_DIAGNOSTICS )
                 // Log copy operation and verify source data
                 static unsigned int s_copyCount = 0;
                 s_copyCount++;
@@ -469,7 +469,7 @@ void radSoundBufferedDataSource::ServiceCopy( void )
                         if (srcData[i] < srcMin) srcMin = srcData[i];
                         if (srcData[i] > srcMax) srcMax = srcData[i];
                     }
-                    SDL_Log("[BUFFERED_COPY] #%u src=%p dst=%p bytes=%u srcZero=%s range=[%u-%u]",
+                    TVOS_AUDIO_DIAG("[BUFFERED_COPY] #%u src=%p dst=%p bytes=%u srcZero=%s range=[%u-%u]",
                             s_copyCount, (void*)srcData, (void*)m_pCurrentCopyPointer, copyBytes,
                             srcAllZero ? "YES-BAD" : "no", srcMin, srcMax);
                 }

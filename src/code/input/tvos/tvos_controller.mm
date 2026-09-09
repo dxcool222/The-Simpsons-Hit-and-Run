@@ -17,10 +17,21 @@
 
 #import <GameController/GameController.h>
 #import <Foundation/Foundation.h>
+#if !defined(RAD_MACOS)
 #import <UIKit/UIKit.h>
+#endif
 
 #include <stdio.h>
 #include <string.h>
+#include <diagnostics/tvosdiagnostics.h>
+
+#if defined( RAD_TVOS_INPUT_DIAGNOSTICS )
+    #define TVOS_INPUT_DIAG(...) SRR2::Diagnostics::AutoLogf(SRR2::Diagnostics::INPUT, __VA_ARGS__)
+#else
+    #define TVOS_INPUT_DIAG(...) ((void)0)
+#endif
+
+#define TVOS_INPUT_WARN(...) SRR2::Diagnostics::Anomalyf(SRR2::Diagnostics::INPUT, __VA_ARGS__)
 
 //=============================================================================
 // Constants
@@ -202,7 +213,7 @@ static void OnControllerConnected(GCController* controller)
     
     slot = FindFreeSlot();
     if (slot < 0) {
-        printf("[TvOSInput] WARNING: No free slots for controller '%s'\n",
+        TVOS_INPUT_WARN("[TvOSInput] WARNING: No free slots for controller '%s'\n",
                controller.vendorName ? controller.vendorName.UTF8String : "Unknown");
         return;
     }
@@ -225,11 +236,12 @@ static void OnControllerConnected(GCController* controller)
         controller.microGamepad.reportsAbsoluteDpadValues = YES;
     }
     
-    printf("[TvOSInput] CONNECTED: slot=%d vendor='%s' category='%s' profile=%s\n",
+    TVOS_INPUT_DIAG("[TvOSInput] CONNECTED: slot=%d vendor='%s' category='%s' profile=%s\n",
            slot,
            g_padStates[slot].vendorName,
            g_padStates[slot].productCategory,
            profileType);
+    SRR2::Diagnostics::RecordControllerConnection( true, slot, g_padStates[slot].vendorName );
 }
 
 //=============================================================================
@@ -242,8 +254,9 @@ static void OnControllerDisconnected(GCController* controller)
         return;
     }
     
-    printf("[TvOSInput] DISCONNECTED: slot=%d vendor='%s'\n",
+    TVOS_INPUT_DIAG("[TvOSInput] DISCONNECTED: slot=%d vendor='%s'\n",
            slot, g_padStates[slot].vendorName);
+    SRR2::Diagnostics::RecordControllerConnection( false, slot, g_padStates[slot].vendorName );
     
     g_controllers[slot] = nil;
     ClearPadState(slot);
@@ -257,14 +270,15 @@ static void OnControllerDisconnected(GCController* controller)
 void TvOSInput_Init(void)
 {
     if (g_initialized) {
-        printf("[TvOSInput] Already initialized, skipping.\n");
+        TVOS_INPUT_DIAG("[TvOSInput] Already initialized, skipping.\n");
         return;
     }
     
-    printf("[TvOSInput] ========================================\n");
-    printf("[TvOSInput] Initializing native GameController.framework backend...\n");
+    TVOS_INPUT_DIAG("[TvOSInput] ========================================\n");
+    TVOS_INPUT_DIAG("[TvOSInput] Initializing native GameController.framework backend...\n");
     
-    // Log app state for debugging
+#if !defined(RAD_MACOS)
+    // Log app state for debugging (UIKit / tvOS only)
     UIApplicationState appState = [UIApplication sharedApplication].applicationState;
     const char* stateStr = "Unknown";
     switch (appState) {
@@ -272,7 +286,8 @@ void TvOSInput_Init(void)
         case UIApplicationStateInactive: stateStr = "Inactive"; break;
         case UIApplicationStateBackground: stateStr = "Background"; break;
     }
-    printf("[TvOSInput] UIApplication state: %s (%d)\n", stateStr, (int)appState);
+    TVOS_INPUT_DIAG("[TvOSInput] UIApplication state: %s (%d)\n", stateStr, (int)appState);
+#endif
     
     // Clear state
     memset(g_padStates, 0, sizeof(g_padStates));
@@ -281,21 +296,28 @@ void TvOSInput_Init(void)
     g_connectedCount = 0;
     g_frameCount = 0;
     
+#if defined(RAD_MACOS)
+    if (@available(macOS 11.3, *)) {
+        GCController.shouldMonitorBackgroundEvents = YES;
+        TVOS_INPUT_DIAG("[TvOSInput] Background event monitoring enabled (macOS)\n");
+    }
+#else
     // Enable background controller monitoring (iOS 14.5+ / tvOS 14.5+)
     if (@available(tvOS 14.5, *)) {
         GCController.shouldMonitorBackgroundEvents = YES;
-        printf("[TvOSInput] Background event monitoring enabled\n");
+        TVOS_INPUT_DIAG("[TvOSInput] Background event monitoring enabled\n");
     }
+#endif
     
     // Register for connect notifications
-    printf("[TvOSInput] Registering for controller connect/disconnect notifications...\n");
+    TVOS_INPUT_DIAG("[TvOSInput] Registering for controller connect/disconnect notifications...\n");
     g_connectObserver = [[NSNotificationCenter defaultCenter]
         addObserverForName:GCControllerDidConnectNotification
         object:nil
         queue:[NSOperationQueue mainQueue]
         usingBlock:^(NSNotification* note) {
             GCController* controller = note.object;
-            printf("[TvOSInput] NOTIFICATION: GCControllerDidConnectNotification received\n");
+            TVOS_INPUT_DIAG("[TvOSInput] NOTIFICATION: GCControllerDidConnectNotification received\n");
             OnControllerConnected(controller);
         }];
     
@@ -306,17 +328,17 @@ void TvOSInput_Init(void)
         queue:[NSOperationQueue mainQueue]
         usingBlock:^(NSNotification* note) {
             GCController* controller = note.object;
-            printf("[TvOSInput] NOTIFICATION: GCControllerDidDisconnectNotification received\n");
+            TVOS_INPUT_DIAG("[TvOSInput] NOTIFICATION: GCControllerDidDisconnectNotification received\n");
             OnControllerDisconnected(controller);
         }];
     
     // Process any already-connected controllers
-    printf("[TvOSInput] Querying [GCController controllers]...\n");
+    TVOS_INPUT_DIAG("[TvOSInput] Querying [GCController controllers]...\n");
     NSArray<GCController*>* controllers = [GCController controllers];
-    printf("[TvOSInput] Found %lu already-connected controller(s)\n", (unsigned long)controllers.count);
+    TVOS_INPUT_DIAG("[TvOSInput] Found %lu already-connected controller(s)\n", (unsigned long)controllers.count);
     
     for (GCController* controller in controllers) {
-        printf("[TvOSInput] Processing controller: vendor='%s' extended=%d micro=%d\n",
+        TVOS_INPUT_DIAG("[TvOSInput] Processing controller: vendor='%s' extended=%d micro=%d\n",
                controller.vendorName ? controller.vendorName.UTF8String : "(null)",
                controller.extendedGamepad != nil ? 1 : 0,
                controller.microGamepad != nil ? 1 : 0);
@@ -327,8 +349,8 @@ void TvOSInput_Init(void)
     TvOSInput_StartDiscovery();
     
     g_initialized = 1;
-    printf("[TvOSInput] Initialization complete. Connected controllers: %d\n", g_connectedCount);
-    printf("[TvOSInput] ========================================\n");
+    TVOS_INPUT_DIAG("[TvOSInput] Initialization complete. Connected controllers: %d\n", g_connectedCount);
+    TVOS_INPUT_DIAG("[TvOSInput] ========================================\n");
 }
 
 void TvOSInput_Shutdown(void)
@@ -337,7 +359,7 @@ void TvOSInput_Shutdown(void)
         return;
     }
     
-    printf("[TvOSInput] Shutting down...\n");
+    TVOS_INPUT_DIAG("[TvOSInput] Shutting down...\n");
     
     TvOSInput_StopDiscovery();
     
@@ -359,7 +381,7 @@ void TvOSInput_Shutdown(void)
     g_connectedCount = 0;
     g_initialized = 0;
     
-    printf("[TvOSInput] Shutdown complete\n");
+    TVOS_INPUT_DIAG("[TvOSInput] Shutdown complete\n");
 }
 
 void TvOSInput_Pump(void)
@@ -370,6 +392,8 @@ void TvOSInput_Pump(void)
     
     g_frameCount++;
     
+    int anyInput = 0;
+
     // Update state for each connected controller
     for (int i = 0; i < TVOS_MAX_CONTROLLERS; i++) {
         GCController* controller = g_controllers[i];
@@ -386,16 +410,24 @@ void TvOSInput_Pump(void)
         } else if (controller.microGamepad) {
             UpdateMicroGamepadState(i, controller.microGamepad);
         }
-        
-        // Log first input from this controller
+
         TvOSPadState* state = &g_padStates[i];
+        if (state->leftStickX != 0.0f || state->leftStickY != 0.0f ||
+            state->rightStickX != 0.0f || state->rightStickY != 0.0f ||
+            state->leftTrigger != 0.0f || state->rightTrigger != 0.0f ||
+            state->buttons != 0) {
+            anyInput = 1;
+        }
+        
+#if defined( RAD_TVOS_INPUT_DIAGNOSTICS )
+        // Log first input from this controller
         if (!g_firstInputLogged[i]) {
             // Check if there's any non-zero input
             if (state->leftStickX != 0.0f || state->leftStickY != 0.0f ||
                 state->rightStickX != 0.0f || state->rightStickY != 0.0f ||
                 state->leftTrigger != 0.0f || state->rightTrigger != 0.0f ||
                 state->buttons != 0) {
-                printf("[TvOSInput] FIRST INPUT slot=%d: LX=%.2f LY=%.2f RX=%.2f RY=%.2f LT=%.2f RT=%.2f BTN=0x%04X\n",
+                TVOS_INPUT_DIAG("[TvOSInput] FIRST INPUT slot=%d: LX=%.2f LY=%.2f RX=%.2f RY=%.2f LT=%.2f RT=%.2f BTN=0x%04X\n",
                        i, state->leftStickX, state->leftStickY,
                        state->rightStickX, state->rightStickY,
                        state->leftTrigger, state->rightTrigger,
@@ -403,25 +435,19 @@ void TvOSInput_Pump(void)
                 g_firstInputLogged[i] = 1;
             }
         }
+#endif
     }
+
+    SRR2::Diagnostics::RecordControllerSample( g_connectedCount > 0, anyInput != 0 );
     
+#if defined( RAD_TVOS_INPUT_DIAGNOSTICS )
     // Periodic status log (every TVOS_LOG_INTERVAL frames)
     if ((g_frameCount % TVOS_LOG_INTERVAL) == 0) {
-        int anyInput = 0;
-        for (int i = 0; i < TVOS_MAX_CONTROLLERS; i++) {
-            if (g_padStates[i].connected) {
-                TvOSPadState* s = &g_padStates[i];
-                if (s->leftStickX != 0.0f || s->leftStickY != 0.0f ||
-                    s->rightStickX != 0.0f || s->rightStickY != 0.0f ||
-                    s->leftTrigger != 0.0f || s->rightTrigger != 0.0f ||
-                    s->buttons != 0) {
-                    anyInput = 1;
-                }
-            }
-        }
-        printf("[TvOSInput] STATUS: frame=%d connected=%d hasInput=%d\n",
+        SRR2::Diagnostics::Summaryf(SRR2::Diagnostics::INPUT,
+               "[INPUT_SUMMARY] frame=%d connected=%d hasInput=%d",
                g_frameCount, g_connectedCount, anyInput);
     }
+#endif
 }
 
 int TvOSInput_GetPadCount(void)
@@ -447,15 +473,15 @@ int TvOSInput_HasAnyController(void)
 
 void TvOSInput_StartDiscovery(void)
 {
-    printf("[TvOSInput] Starting wireless controller discovery...\n");
+    TVOS_INPUT_DIAG("[TvOSInput] Starting wireless controller discovery...\n");
     [GCController startWirelessControllerDiscoveryWithCompletionHandler:^{
-        printf("[TvOSInput] Wireless controller discovery completed\n");
+        TVOS_INPUT_DIAG("[TvOSInput] Wireless controller discovery completed\n");
     }];
 }
 
 void TvOSInput_StopDiscovery(void)
 {
-    printf("[TvOSInput] Stopping wireless controller discovery\n");
+    TVOS_INPUT_DIAG("[TvOSInput] Stopping wireless controller discovery\n");
     [GCController stopWirelessControllerDiscovery];
 }
 

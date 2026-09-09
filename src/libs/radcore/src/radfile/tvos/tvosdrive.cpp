@@ -9,18 +9,30 @@
 #include <SDL2/SDL.h>
 
 #include <algorithm>
+#include <cstdlib>
 #include <cstdio>
 #include <cstring>
 #include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <mutex>
 #include <os/log.h>
 #include <stdarg.h>
 #include <filesystem>
 #include <string>
 #include <sys/statvfs.h>
+#include <sys/xattr.h>
+#include <unordered_map>
+#include <unordered_set>
 
 #include "tvosdrive.hpp"
+#include <diagnostics/tvosdiagnostics.h>
+
+#if defined( RAD_TVOS_STORAGE_DIAGNOSTICS )
+    #define TVOS_STORAGE_DIAG(...) SRR2::Diagnostics::AutoLogf(SRR2::Diagnostics::VFS, __VA_ARGS__)
+#else
+    #define TVOS_STORAGE_DIAG(...) ((void)0)
+#endif
 
 // Get available bytes on the filesystem containing the given path.
 // This queries the actual tvOS sandbox storage, not a fake block device.
@@ -31,11 +43,11 @@ static uint64_t radTvosGetAvailableBytes( const std::filesystem::path& path )
     if ( ec || si.available == static_cast<uintmax_t>(-1) )
     {
         // Fallback: return a large value so saves don't fail
-        SDL_Log( "[SAVE_SPACE] path=%s error=%s, returning fallback", 
+        TVOS_STORAGE_DIAG( "[SAVE_SPACE] path=%s error=%s, returning fallback",
                  path.c_str(), ec ? ec.message().c_str() : "unknown" );
         return UINT_MAX;
     }
-    SDL_Log( "[SAVE_SPACE] path=%s available=%llu bytes", 
+    TVOS_STORAGE_DIAG( "[SAVE_SPACE] path=%s available=%llu bytes",
              path.c_str(), (unsigned long long)si.available );
     return si.available;
 }
@@ -64,7 +76,12 @@ static const std::filesystem::path& radTvosGetAppRoot( void )
     if ( !s_init )
     {
         s_init = true;
+#if defined(RAD_MACOS)
+        // SDL_GetBasePath() is .../Contents/MacOS/ — game data lives in Contents/Resources.
+        s_root = radTvosGetBasePath().parent_path() / "Resources" / "Assets" / "TheSimpsons";
+#else
         s_root = radTvosGetBasePath() / "Assets" / "TheSimpsons";
+#endif
     }
     return s_root;
 }
@@ -76,9 +93,237 @@ static const std::filesystem::path& radTvosGetPrefRoot( void )
     if ( !s_init )
     {
         s_init = true;
-        s_root = MakePathFromSdl( SDL_GetPrefPath( "Radical", "Simpsons" ) );
+        const char* home = std::getenv( "HOME" );
+        if ( home != NULL && home[0] != '\0' )
+        {
+#if defined(RAD_MACOS)
+            // macOS: persistent saves belong in Application Support.
+            s_root = std::filesystem::path( home ) / "Library" / "Application Support" / "Radical" / "Simpsons";
+#else
+            // tvOS: writable user data for this app lives under Library/Caches (not Application Support).
+            s_root = std::filesystem::path( home ) / "Library" / "Caches" / "Radical" / "Simpsons";
+#endif
+        }
+        else
+        {
+            s_root = MakePathFromSdl( SDL_GetPrefPath( "Radical", "Simpsons" ) );
+        }
     }
     return s_root;
+}
+
+static void radTvosConfigurePersistentDirectory( const std::filesystem::path& path )
+{
+    std::error_code ec;
+    std::filesystem::create_directories( path, ec );
+
+    // Best-effort backup exclusion for Apple platforms. Failure should not block saves.
+    const uint8_t excludeFromBackup = 1;
+    (void)setxattr( path.c_str(), "com.apple.MobileBackup", &excludeFromBackup, sizeof( excludeFromBackup ), 0, 0 );
+}
+
+static std::filesystem::path radTvosGetLegacyCachePrefRoot( void )
+{
+    const char* home = std::getenv( "HOME" );
+    if ( home == NULL || home[0] == '\0' )
+    {
+        return std::filesystem::path();
+    }
+
+    return std::filesystem::path( home ) / "Library" / "Caches" / "Radical" / "Simpsons";
+}
+
+static std::filesystem::path radTvosGetLegacyApplicationSupportPrefRoot( void )
+{
+    const char* home = std::getenv( "HOME" );
+    if ( home == NULL || home[0] == '\0' )
+    {
+        return std::filesystem::path();
+    }
+
+    return std::filesystem::path( home ) / "Library" / "Application Support" / "Radical" / "Simpsons";
+}
+
+static void radTvosMigratePrefFilesFromDir( const std::filesystem::path& oldRoot, const std::filesystem::path& newRoot, const char* tag )
+{
+    if ( oldRoot.empty() || newRoot.empty() || oldRoot == newRoot )
+    {
+        return;
+    }
+
+    std::error_code ec;
+    if ( !std::filesystem::exists( oldRoot, ec ) || ec )
+    {
+        return;
+    }
+
+    std::filesystem::create_directories( newRoot, ec );
+    if ( ec )
+    {
+        TVOS_STORAGE_DIAG( "[SAVE_MIGRATE][%s] create failed old=%s new=%s error=%s",
+                           tag ? tag : "?",
+                           oldRoot.c_str(), newRoot.c_str(), ec.message().c_str() );
+        return;
+    }
+
+    unsigned int copied = 0;
+    for ( const auto& entry : std::filesystem::directory_iterator( oldRoot, ec ) )
+    {
+        if ( ec )
+        {
+            break;
+        }
+        if ( !entry.is_regular_file( ec ) || ec )
+        {
+            ec.clear();
+            continue;
+        }
+
+        const std::filesystem::path dest = newRoot / entry.path().filename();
+        if ( std::filesystem::exists( dest, ec ) && !ec )
+        {
+            continue;
+        }
+        ec.clear();
+
+        std::filesystem::copy_file( entry.path(), dest, std::filesystem::copy_options::skip_existing, ec );
+        if ( !ec )
+        {
+            copied++;
+        }
+        else
+        {
+            TVOS_STORAGE_DIAG( "[SAVE_MIGRATE][%s] copy failed src=%s dst=%s error=%s",
+                               tag ? tag : "?",
+                               entry.path().c_str(), dest.c_str(), ec.message().c_str() );
+            ec.clear();
+        }
+    }
+
+    if ( copied > 0 )
+    {
+        TVOS_STORAGE_DIAG( "[SAVE_MIGRATE][%s] copied=%u old=%s new=%s",
+                           tag ? tag : "?", copied, oldRoot.c_str(), newRoot.c_str() );
+    }
+}
+
+static void radTvosMigrateLegacyPrefFiles( const std::filesystem::path& newRoot )
+{
+    radTvosMigratePrefFilesFromDir( radTvosGetLegacyCachePrefRoot(), newRoot, "cache" );
+    radTvosMigratePrefFilesFromDir( radTvosGetLegacyApplicationSupportPrefRoot(), newRoot, "appsupport" );
+}
+
+static std::string radTvosCacheKey( const std::filesystem::path& path )
+{
+    return path.lexically_normal().string();
+}
+
+static std::mutex& radTvosResolveCacheMutex( void )
+{
+    static std::mutex s_mutex;
+    return s_mutex;
+}
+
+static std::unordered_map<std::string, std::string>& radTvosResolveCache( void )
+{
+    static std::unordered_map<std::string, std::string> s_cache;
+    return s_cache;
+}
+
+static std::unordered_set<std::string>& radTvosMissingResolveCache( void )
+{
+    static std::unordered_set<std::string> s_cache;
+    return s_cache;
+}
+
+static bool radTvosPathIsUnderRoot( const std::filesystem::path& path, const std::filesystem::path& root )
+{
+    std::error_code ec;
+    std::filesystem::path rel = std::filesystem::relative( path.lexically_normal(), root.lexically_normal(), ec );
+    if ( ec || rel.empty() )
+    {
+        return false;
+    }
+
+    for ( const auto& part : rel )
+    {
+        if ( part == ".." )
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+static bool radTvosCanCacheMissingPath( const std::filesystem::path& requested )
+{
+    // Only cache misses inside the immutable app bundle. PREF: can gain files
+    // at runtime, so save/settings lookups must always hit the filesystem.
+    return radTvosPathIsUnderRoot( requested, radTvosGetAppRoot() ) ||
+           radTvosPathIsUnderRoot( requested, radTvosGetBasePath() );
+}
+
+static bool radTvosGetCachedMissingPath( const std::filesystem::path& requested )
+{
+    std::lock_guard<std::mutex> lock( radTvosResolveCacheMutex() );
+    auto& cache = radTvosMissingResolveCache();
+    return cache.find( radTvosCacheKey( requested ) ) != cache.end();
+}
+
+static void radTvosCacheMissingPath( const std::filesystem::path& requested )
+{
+    if ( !radTvosCanCacheMissingPath( requested ) )
+    {
+        return;
+    }
+
+    std::lock_guard<std::mutex> lock( radTvosResolveCacheMutex() );
+    auto& cache = radTvosMissingResolveCache();
+    if ( cache.size() > 4096 )
+    {
+        cache.clear();
+    }
+    cache.insert( radTvosCacheKey( requested ) );
+}
+
+static bool radTvosGetCachedResolvedPath( const std::filesystem::path& requested, std::filesystem::path* resolved )
+{
+    if ( resolved == NULL )
+    {
+        return false;
+    }
+
+    std::lock_guard<std::mutex> lock( radTvosResolveCacheMutex() );
+    auto& cache = radTvosResolveCache();
+    const auto it = cache.find( radTvosCacheKey( requested ) );
+    if ( it == cache.end() )
+    {
+        return false;
+    }
+
+    std::filesystem::path cachedPath( it->second );
+    std::error_code ec;
+    if ( !std::filesystem::exists( cachedPath, ec ) || ec )
+    {
+        cache.erase( it );
+        return false;
+    }
+
+    *resolved = cachedPath;
+    return true;
+}
+
+static void radTvosCacheResolvedPath( const std::filesystem::path& requested, const std::filesystem::path& resolved )
+{
+    std::lock_guard<std::mutex> lock( radTvosResolveCacheMutex() );
+    auto& cache = radTvosResolveCache();
+    if ( cache.size() > 4096 )
+    {
+        cache.clear();
+    }
+    cache[ radTvosCacheKey( requested ) ] = resolved.lexically_normal().string();
+    radTvosMissingResolveCache().erase( radTvosCacheKey( requested ) );
 }
 
 static std::filesystem::path radTvosGuessAbsolutePath( const char* requested )
@@ -127,10 +372,16 @@ static bool radTvosResolveCaseInsensitive( const std::filesystem::path& absolute
         return false;
     }
 
+    if ( radTvosGetCachedResolvedPath( absolutePath, outResolved ) )
+    {
+        return true;
+    }
+
     std::error_code ec;
     if ( std::filesystem::exists( absolutePath, ec ) )
     {
         *outResolved = absolutePath;
+        radTvosCacheResolvedPath( absolutePath, *outResolved );
         return true;
     }
 
@@ -228,20 +479,18 @@ static bool radTvosResolveCaseInsensitive( const std::filesystem::path& absolute
     std::filesystem::path resolved;
     if ( tryResolveUnderRoot( appRoot ) )
     {
+        radTvosCacheResolvedPath( absolutePath, *outResolved );
         return true;
     }
     if ( tryResolveUnderRoot( basePath ) )
     {
+        radTvosCacheResolvedPath( absolutePath, *outResolved );
         return true;
     }
 
     (void)resolved;
     return false;
 }
-
-// Counters and throttling for success logging
-static unsigned int s_vfsSuccessCount = 0;
-static unsigned int s_vfsP3dSuccessCount = 0;
 
 static bool radTvosIsStreamedAsset( const char* requested )
 {
@@ -268,47 +517,29 @@ static bool radTvosIsSaveFile( const char* fileName )
 
 static void radTvosLogSuccessOpen( const char* requested, const std::filesystem::path* resolved, unsigned int size, const char* drive, bool writeAccess )
 {
-    s_vfsSuccessCount++;
-    bool isP3d = ( requested && strstr( requested, ".p3d" ) != NULL );
-    if ( isP3d ) s_vfsP3dSuccessCount++;
-    
-    // DIAGNOSTIC: Always log l1z3.p3d loading (Zone 3 terrain - investigating invisibility)
-    bool isL1Z3 = ( requested && ( strstr( requested, "l1z3" ) != NULL || strstr( requested, "L1Z3" ) != NULL ) );
-    if ( isL1Z3 )
+    (void)drive;
+    SRR2::Diagnostics::RecordVfsOpen( writeAccess ? "write" : "read", requested, true, 0, 0 );
+    if ( !radTvosIsSaveFile( requested ) )
     {
-        SDL_Log( "[VFS_Z3_LOAD] *** l1z3.p3d LOADED *** requested=%s resolved=%s size=%u",
-                 requested ? requested : "",
-                 resolved ? resolved->c_str() : "",
-                 size );
-    }
-    
-    // Always log save file operations
-    bool isSave = radTvosIsSaveFile( requested );
-    if ( isSave )
-    {
-        SDL_Log( "[VFS_OPEN] type=%s logical=%s resolved=%s ok=1 size=%u",
-                 writeAccess ? "WRITE" : "READ",
-                 requested ? requested : "",
-                 resolved ? resolved->c_str() : "",
-                 size );
         return;
     }
-    
-    // Log all .p3d loads and every 50th other streamed asset
-    bool shouldLog = isP3d || radTvosIsStreamedAsset( requested );
-    if ( shouldLog && ( isP3d || ( s_vfsSuccessCount % 50 ) == 0 ) )
-    {
-        SDL_Log( "[VFS] SUCCESS: requested=%s resolved=%s size=%u drive=%s p3dCount=%u",
-                 requested ? requested : "",
-                 resolved ? resolved->c_str() : "",
-                 size,
-                 drive ? drive : "?",
-                 s_vfsP3dSuccessCount );
-    }
+
+    TVOS_STORAGE_DIAG( "[VFS_OPEN] type=%s logical=%s resolved=%s ok=1 size=%u",
+             writeAccess ? "WRITE" : "READ",
+             requested ? requested : "",
+             resolved ? resolved->c_str() : "",
+             size );
 }
 
 static void radTvosLogFailedOpen( const char* api, const char* requested, const std::filesystem::path* resolved, int err )
 {
+    SRR2::Diagnostics::RecordVfsOpen( api, requested, false, err, 0 );
+    if ( err == ENOENT )
+    {
+        TVOS_STORAGE_DIAG( "[VFS_MISSING] api=%s requested=%s", api ? api : "", requested ? requested : "" );
+        return;
+    }
+
     std::filesystem::path guessed;
     if ( resolved == NULL )
     {
@@ -317,7 +548,9 @@ static void radTvosLogFailedOpen( const char* api, const char* requested, const 
     }
 
     const char* resolvedStr = ( resolved != NULL ) ? resolved->c_str() : "";
-    SDL_Log( "FAILED OPEN: api=%s requested=%s resolved=%s errno=%d (%s) base=%s appRoot=%s prefRoot=%s caller=0x%llx",
+    SRR2::Diagnostics::Errorf(
+              SRR2::Diagnostics::VFS,
+              "[VFS_OPEN_FAILED] api=%s requested=%s resolved=%s errno=%d (%s) base=%s appRoot=%s prefRoot=%s caller=0x%llx",
               api ? api : "",
               requested ? requested : "",
               resolvedStr,
@@ -339,18 +572,6 @@ static void radTvosLogFailedOpen( const char* api, const char* requested, const 
             radTvosGetPrefRoot().c_str(),
             (unsigned long long)(uintptr_t)__builtin_return_address( 0 ) );
 
-    fprintf( stderr,
-             "FAILED OPEN: api=%s requested=%s resolved=%s errno=%d (%s) base=%s appRoot=%s prefRoot=%s caller=0x%llx\n",
-             api ? api : "",
-             requested ? requested : "",
-             resolvedStr,
-             err,
-             strerror( err ),
-             radTvosGetBasePath().c_str(),
-             radTvosGetAppRoot().c_str(),
-             radTvosGetPrefRoot().c_str(),
-             (unsigned long long)(uintptr_t)__builtin_return_address( 0 ) );
-    fflush( stderr );
 }
 
 extern "C" FILE* fopen( const char* path, const char* mode )
@@ -563,26 +784,27 @@ radTvosDrive::radTvosDrive( const char* driveSpec, radMemoryAllocator alloc )
     else
     {
         // PREF: is writable and must map to SDL_GetPrefPath(org, app)
-        std::filesystem::path pref = MakePathFromSdl( SDL_GetPrefPath( "Radical", "Simpsons" ) );
-        m_Root = pref;
+        m_Root = radTvosGetPrefRoot();
         m_Capabilities = ( radDriveEnumerable | radDriveWriteable | radDriveDirectory | radDriveFile | radDriveSaveGame );
         
-        // Boot-time save detection logging
-        std::error_code bootEc;
-        std::filesystem::create_directories( m_Root, bootEc );
+        radTvosConfigurePersistentDirectory( m_Root );
+        radTvosMigrateLegacyPrefFiles( m_Root );
         
+#if defined( RAD_TVOS_STORAGE_DIAGNOSTICS )
+        std::error_code bootEc;
         // Check for existing save files
         bool save1Exists = std::filesystem::exists( m_Root / "Save1", bootEc );
         bool save2Exists = std::filesystem::exists( m_Root / "Save2", bootEc );
         bool save3Exists = std::filesystem::exists( m_Root / "Save3", bootEc );
         bool settingsExist = std::filesystem::exists( m_Root / "settings", bootEc );
         
-        SDL_Log( "[SAVE_BOOT] prefRoot=%s Save1=%s Save2=%s Save3=%s settings=%s",
+        TVOS_STORAGE_DIAG( "[SAVE_BOOT] prefRoot=%s Save1=%s Save2=%s Save3=%s settings=%s",
                  m_Root.c_str(),
                  save1Exists ? "yes" : "no",
                  save2Exists ? "yes" : "no", 
                  save3Exists ? "yes" : "no",
                  settingsExist ? "yes" : "no" );
+#endif
         return;
     }
 
@@ -629,7 +851,7 @@ radDrive::CompletionStatus radTvosDrive::Initialize( void )
         {
             if ( entry.path().extension() == ".tmp" )
             {
-                SDL_Log( "[SAVE_CLEANUP] Removing orphaned temp file: %s", entry.path().c_str() );
+                TVOS_STORAGE_DIAG( "[SAVE_CLEANUP] Removing orphaned temp file: %s", entry.path().c_str() );
                 std::filesystem::remove( entry.path(), ec );
             }
         }
@@ -812,11 +1034,28 @@ static bool radTvosFilenamesSimilar( const std::string& requested, const std::st
 static bool radTvosFindFileCaseInsensitive( const std::filesystem::path& originalPath, std::filesystem::path* outPath )
 {
     std::error_code ec;
+
+    if ( radTvosGetCachedMissingPath( originalPath ) )
+    {
+        return false;
+    }
+
+    if ( radTvosGetCachedResolvedPath( originalPath, outPath ) )
+    {
+        return true;
+    }
     
     // First check if the exact path exists
     if ( std::filesystem::exists( originalPath, ec ) && !ec )
     {
         *outPath = originalPath;
+        radTvosCacheResolvedPath( originalPath, *outPath );
+        return true;
+    }
+
+    if ( radTvosResolveCaseInsensitive( originalPath, outPath ) )
+    {
+        radTvosCacheResolvedPath( originalPath, *outPath );
         return true;
     }
     
@@ -827,6 +1066,7 @@ static bool radTvosFindFileCaseInsensitive( const std::filesystem::path& origina
     // If parent directory doesn't exist, we can't search
     if ( !std::filesystem::exists( parentDir, ec ) || ec )
     {
+        radTvosCacheMissingPath( originalPath );
         return false;
     }
     
@@ -837,8 +1077,10 @@ static bool radTvosFindFileCaseInsensitive( const std::filesystem::path& origina
     std::filesystem::path lowerPath = parentDir / lowerFilename;
     if ( std::filesystem::exists( lowerPath, ec ) && !ec )
     {
-        SDL_Log( "[VFS_CASE_FIX] Found '%s' as '%s'", originalPath.c_str(), lowerPath.c_str() );
+        TVOS_STORAGE_DIAG( "[VFS_CASE_FIX] Found '%s' as '%s'", originalPath.c_str(), lowerPath.c_str() );
+        SRR2::Diagnostics::RecordVfsFixup( "case", originalPath.c_str(), lowerPath.c_str() );
         *outPath = lowerPath;
+        radTvosCacheResolvedPath( originalPath, *outPath );
         return true;
     }
     
@@ -848,8 +1090,10 @@ static bool radTvosFindFileCaseInsensitive( const std::filesystem::path& origina
     std::filesystem::path upperPath = parentDir / upperFilename;
     if ( std::filesystem::exists( upperPath, ec ) && !ec )
     {
-        SDL_Log( "[VFS_CASE_FIX] Found '%s' as '%s'", originalPath.c_str(), upperPath.c_str() );
+        TVOS_STORAGE_DIAG( "[VFS_CASE_FIX] Found '%s' as '%s'", originalPath.c_str(), upperPath.c_str() );
+        SRR2::Diagnostics::RecordVfsFixup( "case", originalPath.c_str(), upperPath.c_str() );
         *outPath = upperPath;
+        radTvosCacheResolvedPath( originalPath, *outPath );
         return true;
     }
     
@@ -863,8 +1107,10 @@ static bool radTvosFindFileCaseInsensitive( const std::filesystem::path& origina
     std::filesystem::path lowerExtPath = parentDir / ( stem + lowerExt );
     if ( std::filesystem::exists( lowerExtPath, ec ) && !ec )
     {
-        SDL_Log( "[VFS_CASE_FIX] Found '%s' as '%s'", originalPath.c_str(), lowerExtPath.c_str() );
+        TVOS_STORAGE_DIAG( "[VFS_CASE_FIX] Found '%s' as '%s'", originalPath.c_str(), lowerExtPath.c_str() );
+        SRR2::Diagnostics::RecordVfsFixup( "case", originalPath.c_str(), lowerExtPath.c_str() );
         *outPath = lowerExtPath;
+        radTvosCacheResolvedPath( originalPath, *outPath );
         return true;
     }
     
@@ -874,8 +1120,10 @@ static bool radTvosFindFileCaseInsensitive( const std::filesystem::path& origina
     std::filesystem::path upperExtPath = parentDir / ( stem + upperExt );
     if ( std::filesystem::exists( upperExtPath, ec ) && !ec )
     {
-        SDL_Log( "[VFS_CASE_FIX] Found '%s' as '%s'", originalPath.c_str(), upperExtPath.c_str() );
+        TVOS_STORAGE_DIAG( "[VFS_CASE_FIX] Found '%s' as '%s'", originalPath.c_str(), upperExtPath.c_str() );
+        SRR2::Diagnostics::RecordVfsFixup( "case", originalPath.c_str(), upperExtPath.c_str() );
         *outPath = upperExtPath;
+        radTvosCacheResolvedPath( originalPath, *outPath );
         return true;
     }
     
@@ -894,8 +1142,10 @@ static bool radTvosFindFileCaseInsensitive( const std::filesystem::path& origina
         // Exact case-insensitive match (highest priority)
         if ( strcasecmp( entryName.c_str(), filename.c_str() ) == 0 )
         {
-            SDL_Log( "[VFS_CASE_FIX] Found '%s' as '%s' (exact)", originalPath.c_str(), entry.path().c_str() );
+            TVOS_STORAGE_DIAG( "[VFS_CASE_FIX] Found '%s' as '%s' (exact)", originalPath.c_str(), entry.path().c_str() );
+            SRR2::Diagnostics::RecordVfsFixup( "case", originalPath.c_str(), entry.path().c_str() );
             *outPath = entry.path();
+            radTvosCacheResolvedPath( originalPath, *outPath );
             return true;
         }
         
@@ -910,16 +1160,20 @@ static bool radTvosFindFileCaseInsensitive( const std::filesystem::path& origina
     
     if ( foundMatch )
     {
-        SDL_Log( "[VFS_FUZZY_FIX] Found '%s' as '%s' (similar)", originalPath.c_str(), bestMatch.c_str() );
+        TVOS_STORAGE_DIAG( "[VFS_FUZZY_FIX] Found '%s' as '%s' (similar)", originalPath.c_str(), bestMatch.c_str() );
+        SRR2::Diagnostics::RecordVfsFixup( "fuzzy", originalPath.c_str(), bestMatch.c_str() );
         *outPath = bestMatch;
+        radTvosCacheResolvedPath( originalPath, *outPath );
         return true;
     }
     
+    radTvosCacheMissingPath( originalPath );
     return false;
 }
 
 radDrive::CompletionStatus radTvosDrive::OpenFile( const char* fileName, radFileOpenFlags flags, bool writeAccess, radFileHandle* pHandle, unsigned int* pSize )
 {
+    SRR2::Diagnostics::ScopedTimer tvosOpenTimer( SRR2::Diagnostics::VFS, "radTvosDrive::OpenFile", 50 );
     std::string requested;
     requested.reserve( strlen( m_DriveName ) + ( fileName ? strlen( fileName ) : 0 ) + 1 );
     requested.append( m_DriveName );
@@ -933,16 +1187,29 @@ radDrive::CompletionStatus radTvosDrive::OpenFile( const char* fileName, radFile
 
     std::error_code ec;
     
-    // Use case-insensitive file lookup to handle .P3D vs .p3d mismatches
+    // Use case-insensitive lookup for existing read targets. New writes should not
+    // scan asset directories on the main thread just to create a save/temp file.
     std::filesystem::path resolvedPath;
-    bool fileFound = radTvosFindFileCaseInsensitive( finalPath, &resolvedPath );
+    bool fileFound = false;
+    if ( writeAccess && flags != OpenExisting )
+    {
+        fileFound = std::filesystem::exists( finalPath, ec ) && !ec;
+        if ( fileFound )
+        {
+            resolvedPath = finalPath;
+        }
+    }
+    else
+    {
+        fileFound = radTvosFindFileCaseInsensitive( finalPath, &resolvedPath );
+    }
     
     // DIAGNOSTIC: Log zone file resolution attempts
     bool isZoneFile = (fileName && (strstr(fileName, "l1z") || strstr(fileName, "L1Z") || 
                                      strstr(fileName, "l1r") || strstr(fileName, "L1R")));
     if (isZoneFile) {
         bool isL1Z3 = (fileName && (strstr(fileName, "l1z3") || strstr(fileName, "L1Z3")));
-        SDL_Log("[VFS_ZONE_RESOLVE] requested='%s' finalPath='%s' found=%d %s",
+        TVOS_STORAGE_DIAG("[VFS_ZONE_RESOLVE] requested='%s' finalPath='%s' found=%d %s",
                 fileName ? fileName : "NULL",
                 finalPath.c_str(),
                 fileFound ? 1 : 0,
@@ -1044,7 +1311,7 @@ radDrive::CompletionStatus radTvosDrive::OpenFile( const char* fileName, radFile
 radDrive::CompletionStatus radTvosDrive::OpenSaveGame( const char* fileName, radFileOpenFlags flags, bool writeAccess, radMemcardInfo* /*memcardInfo*/, unsigned int /*maxSize*/, radFileHandle* pHandle, unsigned int* pSize )
 {
     // Save games are implemented as regular files on PREF:.
-    SDL_Log( "[SAVE_OPEN] file=%s flags=%d write=%d", fileName ? fileName : "", (int)flags, writeAccess ? 1 : 0 );
+    TVOS_STORAGE_DIAG( "[SAVE_OPEN] file=%s flags=%d write=%d", fileName ? fileName : "", (int)flags, writeAccess ? 1 : 0 );
     return OpenFile( fileName, flags, writeAccess, pHandle, pSize );
 }
 
@@ -1105,7 +1372,7 @@ radDrive::CompletionStatus radTvosDrive::CloseFile( radFileHandle handle, const 
             // Log successful atomic write for save files
             std::error_code szEc;
             auto fileSize = std::filesystem::file_size( h->finalPath, szEc );
-            SDL_Log( "[SAVE_WRITE] path=%s bytes=%llu ok=1",
+            TVOS_STORAGE_DIAG( "[SAVE_WRITE] path=%s bytes=%llu ok=1",
                      h->finalPath.c_str(), szEc ? 0ULL : (unsigned long long)fileSize );
             m_LastError = Success;
         }

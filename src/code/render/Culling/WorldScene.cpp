@@ -1088,7 +1088,7 @@ BEGIN_PROFILE("list construction")
         //For all the Used slots in the node's T array
         int i;
         //////////////////////////////////////////////////////////////////////////
-#ifdef RAD_TVOS
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_RENDER_DIAGNOSTICS )
         // DIAGNOSTIC: Count Zone 3 entities in spatial tree vs culled
         static int sZ3TotalCount = 0;
         static int sZ3CulledCount = 0;
@@ -1100,7 +1100,7 @@ BEGIN_PROFILE("list construction")
 #ifdef ZSORT_RENDER
             mStaticTreeWalker.rCurrent().mSEntityElems[i]->GetBoundingSphere(&ObjectSphere);
             
-#ifdef RAD_TVOS
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_RENDER_DIAGNOSTICS )
             // Check if entity is in Zone 3 area (Lisa's School)
             float ex = ObjectSphere.centre.x;
             float ez = ObjectSphere.centre.z;
@@ -1110,13 +1110,13 @@ BEGIN_PROFILE("list construction")
             
             if(!IsSphereInCone(ObjectSphere.centre, ObjectSphere.radius))
             {
-#ifdef RAD_TVOS
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_RENDER_DIAGNOSTICS )
                 if(isZ3) sZ3CulledCount++;
 #endif
                 continue;
             }
             
-#ifdef RAD_TVOS
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_RENDER_DIAGNOSTICS )
             if(isZ3) sZ3PassedCount++;
 #endif
 
@@ -1174,7 +1174,7 @@ BEGIN_PROFILE("list construction")
             DebugRenderGeoCount++;
         }
         
-#ifdef RAD_TVOS
+#if defined( RAD_TVOS ) && defined( RAD_TVOS_RENDER_DIAGNOSTICS )
         // Log Zone 3 entity counts periodically
         sLogInterval++;
         if(sLogInterval >= 3600) // Every ~60 seconds at 60fps

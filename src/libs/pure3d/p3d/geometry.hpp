@@ -35,7 +35,7 @@ public:
     virtual void SetShader(int i, tShader* shader);
 
     virtual int GetNumPrimGroup()                   { return primGroup.Size( ); } 
-    virtual tPrimGroup* GetPrimGroup(int i)         { return primGroup[i];}
+    virtual tPrimGroup* GetPrimGroup(int i)         { return ( i >= 0 && (unsigned)i < primGroup.Size() ) ? primGroup[i] : NULL;}
     virtual void SetPrimGroup(int i, tPrimGroup* group);
 
     virtual int GetNumFaceNormals()                 { return 0; }
@@ -88,4 +88,3 @@ protected:
 
 
 #endif /* _GEOMETRY_HPP */
-
